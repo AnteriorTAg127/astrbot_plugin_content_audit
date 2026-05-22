@@ -1,0 +1,255 @@
+{
+  "api": {
+    "type": "object",
+    "title": "API 设置",
+    "description": "连接本地内容审核 API 的参数",
+    "items": {
+      "base_url": {
+        "type": "string",
+        "title": "审核 API 地址",
+        "description": "内容审核服务的 HTTP 地址",
+        "hint": "插件所有审核请求都会发往此地址，请确保服务已启动且可达。如：http://127.0.0.1:8000",
+        "default": "http://127.0.0.1:8000"
+      },
+      "api_key": {
+        "type": "string",
+        "title": "API Key",
+        "description": "审核 API 的认证密钥",
+        "hint": "standard 分组即可满足基本审核需求。未设置时审核请求会被 API 拒绝。",
+        "default": ""
+      },
+      "timeout": {
+        "type": "int",
+        "title": "HTTP 请求超时（秒）",
+        "description": "等待审核 API 响应的最大秒数",
+        "hint": "超时后会自动重试（次数由 max_retries 决定），重试用完则降级放行，不阻塞群聊。网络较慢时可适当调高。",
+        "default": 10
+      },
+      "max_retries": {
+        "type": "int",
+        "title": "失败最大重试次数",
+        "description": "API 请求失败时的最大重试次数",
+        "hint": "重试间隔使用指数退避策略。超过此次数仍失败则放行该条消息，并在管理群通报标注「审核失败」。",
+        "default": 3
+      },
+      "health_check_interval": {
+        "type": "int",
+        "title": "健康检查间隔（秒）",
+        "description": "定时检测 API 状态的间隔，0=关闭",
+        "hint": "检测失败时会输出日志告警，不影响消息流。关闭后无法感知 API 不可用状态，不推荐设为 0。",
+        "default": 60
+      }
+    }
+  },
+  "audit": {
+    "type": "object",
+    "title": "审核设置",
+    "description": "审核行为的全局控制参数",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "title": "总开关",
+        "description": "关闭后所有消息不经过审核流程",
+        "hint": "相当于完全停用插件。调试或临时暂停审核时使用。",
+        "default": true
+      },
+      "skip_admin": {
+        "type": "bool",
+        "title": "跳过管理员",
+        "description": "管理员/群主消息不审核，仅通报不处罚",
+        "hint": "建议保持开启，避免误处罚管理成员。关闭后管理员消息也会被审核和处罚。",
+        "default": true
+      },
+      "skip_llm": {
+        "type": "bool",
+        "title": "跳过 LLM 复核",
+        "description": "跳过大模型终审，仅用关键词+语义检测",
+        "hint": "开启后审核速度更快但准确率可能降低（更多误判或漏判）。对响应速度要求高的场景可开启，建议配合人工抽查。",
+        "default": false
+      },
+      "min_text_length": {
+        "type": "int",
+        "title": "最短审核文本长度",
+        "description": "小于此字符数的文本不送审",
+        "hint": "避免对过短无意义的文本浪费审核资源。例如设为 2 时，好的、嗯等短消息直接放行。",
+        "default": 2
+      }
+    }
+  },
+  "action": {
+    "type": "object",
+    "title": "违规行为",
+    "description": "检测到违规后的自动处置动作",
+    "items": {
+      "auto_recall": {
+        "type": "bool",
+        "title": "自动撤回",
+        "description": "违规消息由机器人自动撤回",
+        "hint": "关闭时违规消息保留在群里，但管理群仍会收到通报。机器人没有撤回权限时，通报会标注「撤回失败」。",
+        "default": true
+      },
+      "auto_mute": {
+        "type": "bool",
+        "title": "自动禁言",
+        "description": "违规用户由机器人自动禁言",
+        "hint": "禁言时长按违规次数递增。关闭时不禁言但管理群仍会收到通报。机器人没有禁言权限时，通报会标注「禁言失败」。",
+        "default": true
+      },
+      "first_mute_duration": {
+        "type": "int",
+        "title": "首次禁言时长（秒）",
+        "description": "用户首次违规时的禁言时长",
+        "hint": "后续每次违规按递增倍率翻倍。例如设 300 秒（5 分钟），第二次为 600 秒。auto_mute 关闭时此项无效。",
+        "default": 300
+      },
+      "max_mute_duration": {
+        "type": "int",
+        "title": "最大禁言时长（秒）",
+        "description": "禁言时长的硬上限",
+        "hint": "即使按递增倍率计算超过此值也不会超过。例如 86400（24 小时）防止禁言无限增长。auto_mute 关闭时此项无效。",
+        "default": 86400
+      },
+      "mute_multiplier": {
+        "type": "float",
+        "title": "禁言时长递增倍率",
+        "description": "每次违规时长翻倍的系数",
+        "hint": "公式：第 N 次 = first × multiplier^(N-1)。设为 1.0 可关闭递增（每次固定时长）。auto_mute 关闭时此项无效。",
+        "default": 2.0
+      }
+    }
+  },
+  "notify": {
+    "type": "object",
+    "title": "通报设置",
+    "description": "违规时如何向管理群发送通知",
+    "items": {
+      "mode": {
+        "type": "string",
+        "title": "通报模式",
+        "description": "违规通报的策略",
+        "hint": "violation_only（推荐）：仅在检测到违规时通报。none：静默模式，不发送任何管理群通报，仅保留本地日志。注意：none 模式下管理员无法感知违规事件，请谨慎使用。",
+        "options": ["violation_only", "none"],
+        "default": "violation_only"
+      },
+      "show_text_preview": {
+        "type": "bool",
+        "title": "显示文本预览",
+        "description": "通报中是否包含违规文本片段",
+        "hint": "关闭后通报仅显示「违规内容」字样，不展示具体文字，可用于保护消息隐私。",
+        "default": true
+      },
+      "preview_max_length": {
+        "type": "int",
+        "title": "文本预览最大字符数",
+        "description": "违规文本预览的截断长度",
+        "hint": "超出部分被截断并追加省略号。仅 show_text_preview 开启时生效。设太小丢失上下文，设太大通报消息过长。",
+        "default": 100
+      }
+    }
+  },
+  "group_settings": {
+    "type": "template_list",
+    "title": "群组设置",
+    "description": "被管理群与管理群的绑定关系",
+    "default": [],
+    "templates": {
+      "group_config": {
+        "name": "群组审核配置",
+        "hint": "每行定义一个「被管理群→管理群」的绑定，以及该群的个性化审核策略。一个管理群可管理多个被管理群。",
+        "items": {
+          "group_id": {
+            "type": "string",
+            "title": "被管理群号",
+            "description": "需要审核文本消息的群号",
+            "hint": "必填。该群所有成员发送的文本消息都会被检测（管理员豁免除外）。",
+            "default": ""
+          },
+          "manage_group_id": {
+            "type": "string",
+            "title": "管理群号",
+            "description": "接收通报并执行命令的群号",
+            "hint": "必填。管理员在此群使用 /文本审核 命令查看统计、管理白名单、删除违规记录。",
+            "default": ""
+          },
+          "enabled": {
+            "type": "bool",
+            "title": "启用审核",
+            "description": "关闭后该群消息不受审核",
+            "hint": "可用于临时暂停某个群的审核而不删除绑定关系。",
+            "default": true
+          },
+          "enable_auto_censor": {
+            "type": "bool",
+            "title": "智能审查",
+            "description": "根据时间段和管理员在线状态动态审查",
+            "hint": "开启后配合下方时间段和离线窗口使用。关闭=始终全量审查所有消息。",
+            "default": false
+          },
+          "auto_censor_schedule": {
+            "type": "string",
+            "title": "强制审查时间段",
+            "description": "此时间段内始终开启审查",
+            "hint": "不受管理员在线状态影响。格式：hh:mm-hh:mm（如 23:00-09:00 夜间强制审查）。留空=不设强制段。",
+            "default": ""
+          },
+          "auto_censor_no_admin_minutes": {
+            "type": "int",
+            "title": "管理员离线检测窗口（分钟）",
+            "description": "管理员无发言超过此分钟数则自动开启审查",
+            "hint": "例如设 30：管理员 30 分钟内没在群里说话则开启审查，一说话又自动暂停。0=关闭离线检测。仅在智能审查开启时生效，建议 20~60。",
+            "default": 0
+          },
+          "override_skip_admin": {
+            "type": "bool",
+            "title": "覆盖: 跳过管理员",
+            "description": "覆盖全局「跳过管理员」设置",
+            "hint": "null=跟随全局，true=本群跳过管理员，false=本群审查管理员。",
+            "default": null
+          },
+          "override_skip_llm": {
+            "type": "bool",
+            "title": "覆盖: 跳过 LLM 复核",
+            "description": "覆盖全局「跳过 LLM 复核」设置",
+            "hint": "null=跟随全局，true=本群跳过（更快），false=启用 LLM（更准）。大群需要快速响应时可开启。",
+            "default": null
+          },
+          "override_auto_recall": {
+            "type": "bool",
+            "title": "覆盖: 自动撤回",
+            "description": "覆盖全局「自动撤回」设置",
+            "hint": "null=跟随全局，true=本群撤回违规消息，false=本群不撤回。只想通报不想撤回的群可关闭。",
+            "default": null
+          },
+          "override_auto_mute": {
+            "type": "bool",
+            "title": "覆盖: 自动禁言",
+            "description": "覆盖全局「自动禁言」设置",
+            "hint": "null=跟随全局，true=本群禁言，false=本群不禁言。用户活跃度高的群可能希望关闭。",
+            "default": null
+          },
+          "override_min_text_length": {
+            "type": "int",
+            "title": "覆盖: 最短审核文本长度",
+            "description": "覆盖全局「最短审核文本长度」设置",
+            "hint": "null=跟随全局，设数字=本群专用长度。技术群短消息多可适当提高以减少误审。",
+            "default": null
+          }
+        }
+      }
+    }
+  },
+  "whitelist": {
+    "type": "object",
+    "title": "白名单",
+    "description": "免审用户的配置",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "title": "启用白名单",
+        "description": "开启后白名单用户消息直接放行",
+        "hint": "用户列表请通过管理群 /文本审核 白名单 添加/删除 命令管理，不在此处配置。关闭后所有用户均受审核。",
+        "default": false
+      }
+    }
+  }
+}
