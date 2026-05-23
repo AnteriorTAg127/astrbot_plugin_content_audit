@@ -58,18 +58,21 @@ class AuditClient:
             )
         return self._session
 
-    async def audit(self, text: str, skip_llm: bool = False) -> AuditResult:
+    async def audit(self, text: str, skip_llm: bool = False, context: str = "") -> AuditResult:
         """
         审核文本内容
 
         Args:
             text: 待审核的文本内容
             skip_llm: 是否跳过 LLM 审核
+            context: 审核上下文（最近聊天记录），仅注入 L3 LLM 阶段的 Prompt
 
         Returns:
             AuditResult: 审核结果
         """
-        payload = {"sentence": text, "skip_llm": skip_llm}
+        payload: dict = {"sentence": text, "skip_llm": skip_llm}
+        if context:
+            payload["context"] = context
         url = f"{self._base_url}/audit"
 
         for attempt in range(self._max_retries + 1):

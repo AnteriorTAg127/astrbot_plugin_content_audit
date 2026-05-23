@@ -191,17 +191,32 @@ class ConfigManager:
                 return True
         return False
 
+    # 群级直读配置的默认值（不再依赖全局 section 回退）
+    _DEFAULTS: dict[str, object] = {
+        "skip_admin": True,
+        "skip_llm": False,
+        "min_text_length": 2,
+        "auto_recall": True,
+        "auto_mute": True,
+        "context_enabled": True,
+        "context_max_messages": 5,
+    }
+
     def get_effective_config(self, group_id: str, key: str, default=None):
+        """从群设置中读取配置值。
+
+        查找顺序（兼容旧版 override_* 键）：
+        1. group_config[key] 直接命中（新版扁平字段）
+        2. group_config[f"override_{key}"] 且非 None（旧版兼容）
+        3. 内置默认值
+        4. 调用方传入的 default
+        """
         group_config = self._group_configs.get(group_id, {})
+        if key in group_config and group_config[key] is not None:
+            return group_config[key]
         override_key = f"override_{key}"
         if override_key in group_config and group_config[override_key] is not None:
             return group_config[override_key]
-        section_map = {
-            "skip_admin": "audit",
-            "skip_llm": "audit",
-            "min_text_length": "audit",
-            "auto_recall": "action",
-            "auto_mute": "action",
-        }
-        section = section_map.get(key, "audit")
-        return self.config.get(section, {}).get(key, default)
+        if key in self._DEFAULTS:
+            return self._DEFAULTS[key]
+        return default

@@ -12,6 +12,7 @@ from .admin_manager import AdminManager
 from .audit_client import AuditClient
 from .command_handler import CommandHandler
 from .config_manager import ConfigManager
+from .context_cache import ContextCache
 from .message_handler import MessageHandler
 from .stats_manager import StatsManager
 from .violation_handler import ViolationHandler
@@ -36,6 +37,7 @@ class ContentAuditPlugin(Star):
         self._config_manager: ConfigManager | None = None
         self._admin_manager: AdminManager | None = None
         self._audit_client: AuditClient | None = None
+        self._context_cache: ContextCache | None = None
         self._stats_manager: StatsManager | None = None
         self._violation_handler: ViolationHandler | None = None
         self._message_handler: MessageHandler | None = None
@@ -82,12 +84,14 @@ class ContentAuditPlugin(Star):
         self._violation_handler = ViolationHandler(self._config_manager, self._stats_manager, self.context)
 
         # 7. 消息处理器
+        self._context_cache = ContextCache()
         self._message_handler = MessageHandler(
             self._config_manager,
             self._admin_manager,
             self._audit_client,
             self._violation_handler,
             self._stats_manager,
+            self._context_cache,
         )
 
         # 8. 命令处理器

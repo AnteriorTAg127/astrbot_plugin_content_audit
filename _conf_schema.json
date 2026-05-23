@@ -52,27 +52,6 @@
         "description": "关闭后所有消息不经过审核流程",
         "hint": "相当于完全停用插件。调试或临时暂停审核时使用。",
         "default": true
-      },
-      "skip_admin": {
-        "type": "bool",
-        "title": "跳过管理员",
-        "description": "管理员/群主消息不审核，仅通报不处罚",
-        "hint": "建议保持开启，避免误处罚管理成员。关闭后管理员消息也会被审核和处罚。",
-        "default": true
-      },
-      "skip_llm": {
-        "type": "bool",
-        "title": "跳过 LLM 复核",
-        "description": "跳过大模型终审，仅用关键词+语义检测",
-        "hint": "开启后审核速度更快但准确率可能降低（更多误判或漏判）。对响应速度要求高的场景可开启，建议配合人工抽查。",
-        "default": false
-      },
-      "min_text_length": {
-        "type": "int",
-        "title": "最短审核文本长度",
-        "description": "小于此字符数的文本不送审",
-        "hint": "避免对过短无意义的文本浪费审核资源。例如设为 2 时，好的、嗯等短消息直接放行。",
-        "default": 2
       }
     }
   },
@@ -81,20 +60,6 @@
     "title": "违规行为",
     "description": "检测到违规后的自动处置动作",
     "items": {
-      "auto_recall": {
-        "type": "bool",
-        "title": "自动撤回",
-        "description": "违规消息由机器人自动撤回",
-        "hint": "关闭时违规消息保留在群里，但管理群仍会收到通报。机器人没有撤回权限时，通报会标注「撤回失败」。",
-        "default": true
-      },
-      "auto_mute": {
-        "type": "bool",
-        "title": "自动禁言",
-        "description": "违规用户由机器人自动禁言",
-        "hint": "禁言时长按违规次数递增。关闭时不禁言但管理群仍会收到通报。机器人没有禁言权限时，通报会标注「禁言失败」。",
-        "default": true
-      },
       "first_mute_duration": {
         "type": "int",
         "title": "首次禁言时长（秒）",
@@ -150,7 +115,7 @@
   "group_settings": {
     "type": "template_list",
     "title": "群组设置",
-    "description": "被管理群与管理群的绑定关系",
+    "description": "被管理群与管理群的绑定关系，所有审核策略均在群级别配置。",
     "default": [],
     "templates": {
       "group_config": {
@@ -178,6 +143,55 @@
             "hint": "可用于临时暂停某个群的审核而不删除绑定关系。",
             "default": true
           },
+          "skip_admin": {
+            "type": "bool",
+            "title": "跳过管理员",
+            "description": "管理员/群主消息不审核，仅通报不处罚",
+            "hint": "建议保持开启，避免误处罚管理成员。关闭后管理员消息也会被审核和处罚。",
+            "default": true
+          },
+          "skip_llm": {
+            "type": "bool",
+            "title": "跳过 LLM 复核",
+            "description": "跳过大模型终审，仅用关键词+语义检测",
+            "hint": "开启后审核速度更快但准确率可能降低（更多误判或漏判）。对响应速度要求高的场景可开启。",
+            "default": false
+          },
+          "min_text_length": {
+            "type": "int",
+            "title": "最短审核文本长度",
+            "description": "小于此字符数的文本不送审",
+            "hint": "避免对过短无意义的文本浪费审核资源。例如设为 2 时，好的、嗯等短消息直接放行。",
+            "default": 2
+          },
+          "auto_recall": {
+            "type": "bool",
+            "title": "自动撤回",
+            "description": "违规消息由机器人自动撤回",
+            "hint": "关闭时违规消息保留在群里，但管理群仍会收到通报。机器人没有撤回权限时，通报会标注「撤回失败」。",
+            "default": true
+          },
+          "auto_mute": {
+            "type": "bool",
+            "title": "自动禁言",
+            "description": "违规用户由机器人自动禁言",
+            "hint": "禁言时长按违规次数递增。关闭时不禁言但管理群仍会收到通报。机器人没有禁言权限时，通报会标注「禁言失败」。",
+            "default": true
+          },
+          "context_enabled": {
+            "type": "bool",
+            "title": "上传上下文",
+            "description": "将最近聊天记录作为审核上下文发送给 API，辅助 LLM 判断",
+            "hint": "开启后缓存每条消息，审核时连同前后文一起发送。仅对 L3（LLM 审核）阶段生效，不增加关键词/语义检测延迟。",
+            "default": true
+          },
+          "context_max_messages": {
+            "type": "int",
+            "title": "上下文消息数",
+            "description": "每条审核带上最近多少条历史消息",
+            "hint": "值越大上下文越丰富，但 API 处理开销也越大。建议 5~10。上下文字符串上限 2000 字符（API 侧兜底截断）。",
+            "default": 5
+          },
           "enable_auto_censor": {
             "type": "bool",
             "title": "智能审查",
@@ -198,41 +212,6 @@
             "description": "管理员无发言超过此分钟数则自动开启审查",
             "hint": "例如设 30：管理员 30 分钟内没在群里说话则开启审查，一说话又自动暂停。0=关闭离线检测。仅在智能审查开启时生效，建议 20~60。",
             "default": 0
-          },
-          "override_skip_admin": {
-            "type": "bool",
-            "title": "覆盖: 跳过管理员",
-            "description": "覆盖全局「跳过管理员」设置",
-            "hint": "null=跟随全局，true=本群跳过管理员，false=本群审查管理员。",
-            "default": null
-          },
-          "override_skip_llm": {
-            "type": "bool",
-            "title": "覆盖: 跳过 LLM 复核",
-            "description": "覆盖全局「跳过 LLM 复核」设置",
-            "hint": "null=跟随全局，true=本群跳过（更快），false=启用 LLM（更准）。大群需要快速响应时可开启。",
-            "default": null
-          },
-          "override_auto_recall": {
-            "type": "bool",
-            "title": "覆盖: 自动撤回",
-            "description": "覆盖全局「自动撤回」设置",
-            "hint": "null=跟随全局，true=本群撤回违规消息，false=本群不撤回。只想通报不想撤回的群可关闭。",
-            "default": null
-          },
-          "override_auto_mute": {
-            "type": "bool",
-            "title": "覆盖: 自动禁言",
-            "description": "覆盖全局「自动禁言」设置",
-            "hint": "null=跟随全局，true=本群禁言，false=本群不禁言。用户活跃度高的群可能希望关闭。",
-            "default": null
-          },
-          "override_min_text_length": {
-            "type": "int",
-            "title": "覆盖: 最短审核文本长度",
-            "description": "覆盖全局「最短审核文本长度」设置",
-            "hint": "null=跟随全局，设数字=本群专用长度。技术群短消息多可适当提高以减少误审。",
-            "default": null
           }
         }
       }

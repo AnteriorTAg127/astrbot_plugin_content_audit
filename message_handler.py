@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from .admin_manager import AdminManager
     from .audit_client import AuditClient
     from .config_manager import ConfigManager
+    from .context_cache import ContextCache
     from .stats_manager import StatsManager
     from .violation_handler import ViolationHandler
 
@@ -23,6 +24,7 @@ class MessageHandler:
         audit_client: AuditClient,
         violation_handler: ViolationHandler,
         stats_manager: StatsManager,
+        context_cache: ContextCache,
     ) -> None:
         """构造注入"""
         self._config_manager = config_manager
@@ -30,21 +32,24 @@ class MessageHandler:
         self._audit_client = audit_client
         self._violation_handler = violation_handler
         self._stats_manager = stats_manager
+        self._context_cache = context_cache
 
     async def handle(self, event: AstrMessageEvent) -> None:
-        """群消息审核主流水线（来自设计文档 §二）
+        """群消息审核主流水线
 
         流程:
         1. 提取群号与用户信息
         2. 检查群是否启用审核
-        3. 提取并校验文本长度
+        3. 提取文本
         4. 跳过 bot 自身消息
-        5. 检查全局审核开关
-        6. 智能审查决策（时间段 / 管理员在线检测）
-        7. 白名单校验
-        8. 管理员跳过（skip_admin）
-        9. 调用审核 API
-        10. 分发违规处理
+        5. 缓存上下文（最近 K 条消息历史，供审核 API 使用）
+        6. 校验文本长度
+        7. 检查全局审核开关
+        8. 智能审查决策（时间段 / 管理员在线检测）
+        9. 白名单校验
+        10. 管理员跳过（skip_admin）
+        11. 调用审核 API（附带上下文）
+        12. 分发违规处理
         """
         try:
             # ===== 第1步：提取群号与用户信息 =====
@@ -58,13 +63,8 @@ class MessageHandler:
                 logger.debug(f"群 {group_id} 未启用审核，跳过")
                 return
 
-            # ===== 第3步：提取文本并校验长度 =====
+            # ===== 第3步：提取文本 =====
             message_str = event.message_str
-            audit_config = self._config_manager.config.get("audit", {})
-            min_length: int = self._config_manager.get_effective_config(group_id, "min_text_length", 2)
-            if not message_str or len(message_str) < min_length:
-                logger.debug(f"消息文本过短或为空: len={len(message_str) if message_str else 0}, min={min_length}")
-                return
 
             # ===== 第4步：跳过 bot 自身消息 =====
             try:
@@ -75,12 +75,37 @@ class MessageHandler:
             except Exception:
                 pass
 
-            # ===== 第5步：检查全局审核开关 =====
+            # ===== 第5步：缓存上下文 =====
+            # 上下文在消息长度校验之前执行：即使当前消息过短不送审，
+            # 它仍应被缓存作为未来消息的上下文。
+            context_enabled: bool = self._config_manager.get_effective_config(
+                group_id, "context_enabled", True
+            )
+            context_k: int = self._config_manager.get_effective_config(
+                group_id, "context_max_messages", 5
+            )
+            audit_context = ""
+            if context_enabled and context_k > 0 and message_str:
+                audit_context = self._context_cache.get_context(group_id, context_k)
+                self._context_cache.add(group_id, user_name, message_str, context_k)
+                logger.debug(f"上下文已缓存: group={group_id}, k={context_k}")
+
+            # ===== 第6步：校验文本长度 =====
+            audit_config = self._config_manager.config.get("audit", {})
+            min_length: int = self._config_manager.get_effective_config(group_id, "min_text_length", 2)
+            if not message_str or len(message_str) < min_length:
+                logger.debug(
+                    f"消息文本过短或为空: "
+                    f"len={len(message_str) if message_str else 0}, min={min_length}"
+                )
+                return
+
+            # ===== 第7步：检查全局审核开关 =====
             if not audit_config.get("enabled", True):
                 logger.debug("全局审核开关已关闭")
                 return
 
-            # ===== 第6步：智能审查决策 =====
+            # ===== 第8步：智能审查决策 =====
             group_config = self._config_manager.get_group_config(group_id)
             need_admin_check = False
             if group_config:
@@ -111,15 +136,17 @@ class MessageHandler:
                 return
             logger.debug(f"智能审查决策: 启用审核 (原因: {reason})")
 
-            # ===== 第7步：白名单校验 =====
+            # ===== 第9步：白名单校验 =====
             whitelist_config = self._config_manager.config.get("whitelist", {})
             if whitelist_config.get("enabled", False) and await self._config_manager.is_whitelisted(user_id):
                 logger.debug(f"用户 {user_id} 在白名单中，跳过审核")
                 return
 
-            # ===== 第9步：调用审核 API =====
+            # ===== 第10步：调用审核 API =====
             skip_llm: bool = self._config_manager.get_effective_config(group_id, "skip_llm", False)
-            result = await self._audit_client.audit(message_str, skip_llm=skip_llm)
+            result = await self._audit_client.audit(
+                message_str, skip_llm=skip_llm, context=audit_context,
+            )
 
             await self._stats_manager.record_audit(
                 group_id=group_id,
@@ -132,10 +159,13 @@ class MessageHandler:
             )
 
             if result.error:
-                logger.warning(f"审核 API 不可用，降级放行: group={group_id}, user={user_id}, error={result.error}")
+                logger.warning(
+                    f"审核 API 不可用，降级放行: group={group_id}, "
+                    f"user={user_id}, error={result.error}"
+                )
                 return
 
-            # ===== 第10步：分发违规处理 =====
+            # ===== 第11步：分发违规处理 =====
             if result.has_violation:
                 notify_config = self._config_manager.config.get("notify", {})
                 show_preview: bool = notify_config.get("show_text_preview", True)
