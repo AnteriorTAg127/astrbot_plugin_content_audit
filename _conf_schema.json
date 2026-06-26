@@ -52,6 +52,13 @@
         "description": "关闭后所有消息不经过审核流程",
         "hint": "相当于完全停用插件。调试或临时暂停审核时使用。",
         "default": true
+      },
+      "strip_qq_in_at": {
+        "type": "bool",
+        "title": "剔除 @ 后的 QQ 号",
+        "description": "审核前移除消息中 @昵称(QQ号) 中的 QQ 号",
+        "hint": "OneBot 平台 @ 消息常带 (QQ号) 后缀，剔除后可减少噪声、提升审核 API 命中率。数据库 text_preview 保留原文。",
+        "default": true
       }
     }
   },

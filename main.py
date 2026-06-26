@@ -16,13 +16,14 @@ from .context_cache import ContextCache
 from .message_handler import MessageHandler
 from .stats_manager import StatsManager
 from .violation_handler import ViolationHandler
+from .web_api import WebApiHandler
 
 
 @register(
     "astrbot_plugin_content_audit",
     "AnteriorTAg127",
     "基于自用审核API的群聊文本内容审核插件",
-    "1.0.0",
+    "2.0.0",
 )
 class ContentAuditPlugin(Star):
     """基于自用审核API的群聊文本内容审核插件"""
@@ -43,12 +44,14 @@ class ContentAuditPlugin(Star):
         self._message_handler: MessageHandler | None = None
         self._command_handler: CommandHandler | None = None
         self._health_check_task: asyncio.Task | None = None
+        self._web_api: WebApiHandler | None = None
 
     async def initialize(self) -> None:
         """初始化所有子模块"""
         from pathlib import Path
 
         from astrbot.core.utils.astrbot_path import get_astrbot_data_path
+
         data_dir = str(Path(get_astrbot_data_path()) / "plugin_data" / "content_audit_text")
         os.makedirs(data_dir, exist_ok=True)
 
@@ -68,8 +71,14 @@ class ContentAuditPlugin(Star):
         def _on_config_reload(config: dict) -> None:
             api_cfg = config.get("api", {})
             new_url = api_cfg.get("base_url", "http://127.0.0.1:8000")
+            new_key = api_cfg.get("api_key", "")
+            new_timeout = api_cfg.get("timeout", 10)
+            new_retries = api_cfg.get("max_retries", 3)
             if self._audit_client is not None:
                 self._audit_client.update_base_url(new_url)
+                self._audit_client.update_api_key(new_key)
+                self._audit_client.update_timeout(new_timeout)
+                self._audit_client.update_max_retries(new_retries)
 
         # 4. 配置管理器（传入 config_getter 回调，而非直接调用 context.get_config()）
         def _config_getter() -> dict:
@@ -102,11 +111,19 @@ class ContentAuditPlugin(Star):
         )
 
         # 9. 健康检查后台任务
-        health_interval = api_config.get("health_check_interval", 60)
+        try:
+            health_interval = int(api_config.get("health_check_interval", 60))
+        except (ValueError, TypeError):
+            health_interval = 60
         if health_interval > 0:
-            self._health_check_task = asyncio.create_task(
-                self._health_check_loop(health_interval)
-            )
+            self._health_check_task = asyncio.create_task(self._health_check_loop(health_interval))
+
+        # 10. 注册 Dashboard Web API
+        try:
+            self._web_api = WebApiHandler(self._stats_manager, self._config_manager)
+            self._web_api.register(self.context, "astrbot_plugin_content_audit")
+        except Exception:
+            logger.exception("注册 Dashboard Web API 失败，前端页面将不可用")
 
         logger.info("文本审核插件初始化完成")
 
@@ -124,9 +141,7 @@ class ContentAuditPlugin(Star):
             logger.exception("消息处理异常，降级放行")
 
     @filter.command("文本审核")
-    async def cmd_content_audit(
-        self, event: AstrMessageEvent
-    ) -> AsyncGenerator[MessageEventResult, None]:
+    async def cmd_content_audit(self, event: AstrMessageEvent) -> AsyncGenerator[MessageEventResult, None]:
         """文本审核命令入口（仅管理群可用）"""
         # 解析子命令: /文本审核 白名单 添加 123456
         message_str = event.message_str.strip()
@@ -148,22 +163,31 @@ class ContentAuditPlugin(Star):
             cleanup_interval = max(1, 24 * 3600 // interval)
             while True:
                 await asyncio.sleep(interval)
-                if self._config_manager is not None:
-                    self._config_manager.maybe_reload()
-                    api_config = self._config_manager.config.get("api", {})
-                else:
-                    api_config = self._plugin_config.get("api", {})
-                base_url = api_config.get("base_url", "http://127.0.0.1:8000")
-                if self._audit_client is not None:
-                    self._audit_client.update_base_url(base_url)
-                result = await self._audit_client.health_check()
-                if result is None:
-                    logger.warning("审核 API 健康检查失败")
-                cleanup_counter += 1
-                if cleanup_counter >= cleanup_interval and self._stats_manager is not None:
-                    deleted = await self._stats_manager.cleanup_audit_log(keep_days=30)
-                    logger.info(f"审计日志清理完成，删除 {deleted} 条旧记录")
-                    cleanup_counter = 0
+                try:
+                    if self._config_manager is not None:
+                        self._config_manager.maybe_reload()
+                        api_config = self._config_manager.config.get("api", {})
+                    else:
+                        api_config = self._plugin_config.get("api", {})
+                    base_url = api_config.get("base_url", "http://127.0.0.1:8000")
+                    if self._audit_client is not None:
+                        self._audit_client.update_base_url(base_url)
+                        result = await self._audit_client.health_check()
+                        # 记录健康状态汇总（使 health_status 具有消费者）
+                        hs = self._audit_client.health_status
+                        if hs["fail_count"] > 0:
+                            logger.info(f"审核 API 健康状态: ok={hs['ok']}, 累计失败={hs['fail_count']} 次")
+                        if result is None:
+                            logger.warning("审核 API 健康检查失败")
+                    else:
+                        result = None
+                    cleanup_counter += 1
+                    if cleanup_counter >= cleanup_interval and self._stats_manager is not None:
+                        deleted = await self._stats_manager.cleanup_audit_log(keep_days=30)
+                        logger.info(f"审计日志清理完成，删除 {deleted} 条旧记录")
+                        cleanup_counter = 0
+                except Exception:
+                    logger.exception("健康检查循环内部异常，继续运行")
         except asyncio.CancelledError:
             logger.info("健康检查任务已取消")
 
@@ -172,7 +196,7 @@ class ContentAuditPlugin(Star):
             self._health_check_task.cancel()
             try:
                 await self._health_check_task
-            except asyncio.CancelledError:
+            except Exception:
                 pass
         if self._audit_client:
             await self._audit_client.close()

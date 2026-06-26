@@ -198,6 +198,8 @@ class CommandHandler:
     async def _whitelist_list(self) -> str:
         """列出所有白名单用户"""
         users = await self._stats_manager.get_whitelist()
+        if users is None:
+            return "⚠️ 查询白名单失败（数据库错误）"
         if not users:
             return "📋 白名单列表\n暂无白名单用户"
 

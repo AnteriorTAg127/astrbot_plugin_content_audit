@@ -40,11 +40,40 @@ class AuditClient:
         new_url = base_url.rstrip("/")
         if new_url != self._base_url:
             self._base_url = new_url
-            old_session = self._session
-            self._session = None
-            if old_session and not old_session.closed:
-                asyncio.ensure_future(old_session.close())
+            self._invalidate_session()
             logger.info(f"审核客户端 base_url 已更新为: {new_url}")
+
+    def update_api_key(self, api_key: str) -> None:
+        if api_key != self._api_key:
+            self._api_key = api_key
+            self._invalidate_session()
+            logger.info("审核客户端 api_key 已更新")
+
+    def update_timeout(self, timeout: int) -> None:
+        if timeout != self._timeout:
+            self._timeout = timeout
+            self._invalidate_session()
+            logger.info(f"审核客户端 timeout 已更新为: {timeout}")
+
+    def update_max_retries(self, max_retries: int) -> None:
+        if max_retries != self._max_retries:
+            self._max_retries = max_retries
+            logger.info(f"审核客户端 max_retries 已更新为: {max_retries}")
+
+    def _invalidate_session(self) -> None:
+        """标记会话为脏，下次 _get_session() 时重建"""
+        if self._session and not self._session.closed:
+            try:
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    _task = loop.create_task(self._session.close())  # noqa: RUF006  # 不需要 await
+                else:
+                    # 事件循环不在运行（如关闭阶段），直接丢弃
+                    pass
+            except RuntimeError:
+                # 没有运行中的事件循环，直接丢弃
+                pass
+        self._session = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """延迟初始化 HTTP 会话"""
@@ -86,7 +115,7 @@ class AuditClient:
                         request_id=data.get("request_id", ""),
                         raw_response=data,
                     )
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, AttributeError) as e:
                 if attempt < self._max_retries:
                     delay = 2**attempt  # 指数退避: 1s, 2s, 4s, ...
                     logger.warning(f"审核请求失败, 第 {attempt + 1} 次重试, 等待 {delay}s: {e}")
@@ -111,7 +140,7 @@ class AuditClient:
                 self._last_health_time = asyncio.get_event_loop().time()
                 self._health_fail_count = 0
                 return data
-        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             self._last_health_ok = False
             self._last_health_time = asyncio.get_event_loop().time()
             self._health_fail_count += 1

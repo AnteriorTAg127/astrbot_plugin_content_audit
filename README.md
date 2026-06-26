@@ -1,7 +1,7 @@
 # 文本内容审核插件 / Text Content Audit Plugin
 
 [![License](https://img.shields.io/badge/license-AGPLv3-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v1.0.0-blue)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-v2.0.0-blue)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-plugin-orange)](https://github.com/AstrBotDevs/AstrBot)
 
 > 这是一个为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 提供文本内容审核功能的插件。
@@ -21,6 +21,10 @@
 - **递增禁言时长（按违规次数递增）** — 支持自定义倍率和上限
 - **用户白名单系统** — 白名单用户的消息不受审核
 - **审核日志与统计** — 记录违规日志，支持分页查询和统计
+- **QQ 号智能清洗** — 送审前自动剔除 @昵称(QQ号) 中的 QQ 号，减少噪声与 token 浪费
+- **Dashboard 管理面板** — 通过 AstrBot WebUI 可视化查看违规记录、审计日志、白名单、用户档案，支持增删改查
+- **用户档案自动追踪** — 每条审核记录自动归档用户 QQ 号、昵称、所在群、违规次数等信息
+- **健康检查与自动恢复** — 定时检测审核 API 状态，异常时降级放行
 - **健康检查与自动恢复** — 定时检测审核 API 状态，异常时降级放行
 - **审计日志自动清理** — 自动清理 30 天前的日志，防止数据库膨胀
 - **每群独立配置** — 所有审核策略（跳过管理员、跳过 LLM、撤回、禁言、上下文、文本长度等）均在群级别直读，不依赖全局回退
@@ -29,7 +33,7 @@
 
 ## 架构概览
 
-插件由 9 个模块组成：
+插件由 11 个模块组成：
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
@@ -40,8 +44,11 @@
 | **上下文缓存** | `context_cache.py` | 按群缓存最近 K 条消息，格式化后作为审核 API 的 `context` 字段 |
 | **消息编排** | `message_handler.py` | 消息处理主流程：缓存 → 过滤 → 决策 → 豁免 → 审核 → 处置 |
 | **违规处置** | `violation_handler.py` | 管理群通报、消息撤回、递增禁言 |
-| **统计存储** | `stats_manager.py` | SQLite 数据库管理（审计日志、违规记录、白名单）、查询与清理 |
+| **统计存储** | `stats_manager.py` | SQLite 数据库管理（审计日志、违规记录、白名单、用户档案）、查询与清理 |
 | **命令处理** | `command_handler.py` | `/文本审核` 命令组的分发与执行 |
+| **文本清洗** | `text_sanitizer.py` | 送审前剔除 @昵称(QQ号) 中的 QQ 号，纯函数实现 |
+| **Web API** | `web_api.py` | Dashboard 后端 REST API（概览、违规、审计、白名单、用户档案 CRUD） |
+| **管理面板** | `pages/audit/index.html` | 单文件 SPA，5 个 Tab，基于 AstrBot bridge SDK
 
 ### 审核流程
 

@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>文本审核管理</title>
+<style>
+:root {
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --surface-2: #f0f2f5;
+  --surface-3: #e9ecef;
+  --text: #1a1a2e;
+  --text-2: #6b7280;
+  --border: #e5e7eb;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --success: #10b981;
+  --warn: #f59e0b;
+  --info: #3b82f6;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --surface-2: #334155;
+  --surface-3: #475569;
+  --text: #f1f5f9;
+  --text-2: #94a3b8;
+  --border: #334155;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+#app { max-width: 1280px; margin: 0 auto; padding: 12px; }
+.app-header { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px; flex-wrap: wrap; gap: 8px; }
+.app-header h1 { font-size: 18px; font-weight: 700; }
+.app-header .actions { display: flex; gap: 8px; }
+.tabs { display: flex; gap: 2px; margin-bottom: 0; flex-wrap: wrap; }
+.tab { padding: 8px 18px; border: 1px solid var(--border); border-bottom: none; background: var(--surface-2); color: var(--text-2); cursor: pointer; border-radius: var(--radius) var(--radius) 0 0; font-size: 14px; user-select: none; }
+.tab.active { background: var(--surface); color: var(--text); font-weight: 600; }
+.tab:hover:not(.active) { background: var(--surface-3); }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 0 var(--radius) var(--radius) var(--radius); padding: 16px; min-height: 300px; }
+.btn { padding: 6px 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; border-radius: var(--radius); font-size: 13px; font-family: inherit; transition: all 0.15s; user-select: none; }
+.btn:hover { background: var(--surface-2); }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { background: var(--danger-hover); }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+.filter-bar input, .filter-bar select { padding: 6px 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: var(--radius); font-size: 13px; font-family: inherit; }
+.filter-bar input { width: 140px; }
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; flex-wrap: wrap; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; color: var(--text-2); position: sticky; top: 0; }
+tbody tr:hover { background: var(--surface-2); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+.empty { text-align: center; padding: 40px; color: var(--text-2); }
+.pagination { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 12px; }
+.pagination .info { color: var(--text-2); font-size: 12px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+.badge-danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+.badge-warn { background: rgba(245,158,11,0.15); color: var(--warn); }
+.badge-info { background: rgba(59,130,246,0.15); color: var(--info); }
+.badge-muted { background: var(--surface-3); color: var(--text-2); }
+.chip { display: inline-block; padding: 1px 6px; background: var(--surface-2); border-radius: 4px; font-size: 11px; margin: 1px 2px; }
+.preview { max-width: 320px; word-break: break-all; }
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.stat-card { background: var(--surface-2); border-radius: var(--radius); padding: 16px; text-align: center; }
+.stat-card .label { color: var(--text-2); font-size: 12px; }
+.stat-card .value { font-size: 28px; font-weight: 700; color: var(--primary); margin-top: 4px; }
+.chart { display: flex; gap: 6px; align-items: flex-end; height: 160px; padding: 12px; background: var(--surface-2); border-radius: var(--radius); margin-bottom: 8px; }
+.chart-day { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.chart-bars { display: flex; gap: 2px; align-items: flex-end; height: 110px; width: 100%; justify-content: center; }
+.chart-bar { width: 14px; background: var(--primary); border-radius: 2px 2px 0 0; min-height: 1px; transition: height 0.3s; position: relative; }
+.chart-bar.violation { background: var(--danger); }
+.chart-label { font-size: 11px; color: var(--text-2); }
+.section-title { font-weight: 700; margin: 16px 0 8px; font-size: 15px; }
+.dual-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.legend { display: flex; gap: 16px; justify-content: center; padding: 8px; font-size: 12px; color: var(--text-2); margin-bottom: 8px; }
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+.modal { background: var(--surface); border-radius: var(--radius); padding: 20px; min-width: 320px; max-width: 600px; width: 100%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
+.modal h3 { margin-bottom: 12px; font-size: 16px; }
+.modal .form-row { margin-bottom: 10px; }
+.modal label { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.modal input, .modal select, .modal textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: var(--radius); font-size: 13px; font-family: inherit; }
+.modal textarea { resize: vertical; min-height: 70px; }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modal .readonly-block { background: var(--surface-2); padding: 8px 10px; border-radius: var(--radius); font-family: ui-monospace, monospace; font-size: 12px; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
+.toast-mount { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
+.toast { padding: 10px 18px; border-radius: var(--radius); color: #fff; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.toast.success { background: var(--success); }
+.toast.error { background: var(--danger); }
+.toast.info { background: var(--info); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--surface-3); border-top-color: var(--primary); border-radius: 50%; vertical-align: middle; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-overlay { padding: 40px; text-align: center; color: var(--text-2); }
+@media (max-width: 1024px) {
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+  .dual-col { grid-template-columns: 1fr; }
+  th, td { padding: 6px 8px; font-size: 12px; }
+}
+@media (max-width: 768px) {
+  #app { padding: 6px; }
+  .app-header h1 { font-size: 16px; }
+  .tab { padding: 6px 10px; font-size: 12px; }
+  .panel { padding: 10px; }
+  .filter-bar input { width: 100%; }
+  table thead { display: none; }
+  table, tbody, tr, td { display: block; width: 100%; }
+  tr { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; margin-bottom: 8px; background: var(--surface); }
+  td { border: none; padding: 4px 0; }
+  td::before { content: attr(data-label) ": "; font-weight: 600; color: var(--text-2); margin-right: 4px; }
+  .preview { max-width: none; }
+  .chart-bar { width: 8px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="app-header">
+    <h1>文本审核管理</h1>
+    <div class="actions">
+      <button class="btn" id="btn-refresh">刷新</button>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <div class="tab active" data-tab="overview">概览</div>
+    <div class="tab" data-tab="violations">违规记录</div>
+    <div class="tab" data-tab="audits">审计日志</div>
+    <div class="tab" data-tab="whitelist">白名单</div>
+    <div class="tab" data-tab="users">用户档案</div>
+  </nav>
+  <main class="panel" id="content">
+    <div class="loading-overlay"><span class="spinner"></span> 加载中...</div>
+  </main>
+</div>
+<div id="modal-mount"></div>
+<div id="toast-mount" class="toast-mount"></div>
+<script>
+(function(){
+  "use strict";
+  var bridge = null;
+  var state = {
+    tab: "overview",
+    violations: { page: 1, page_size: 20, group_id: "", user_id: "", keyword: "", items: [], total: 0, selected: {} },
+    audits: { page: 1, page_size: 20, group_id: "", has_violation: "", keyword: "", items: [], total: 0, selected: {} },
+    whitelist: { items: [] },
+    users: { page: 1, page_size: 20, keyword: "", status: "", items: [], total: 0 }
+  };
+
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+  function el(tag, attrs, children) {
+    var n = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (k === "class") n.className = attrs[k];
+        else if (k === "text") n.textContent = attrs[k];
+        else if (k === "html") n.innerHTML = attrs[k];
+        else if (k === "style") n.setAttribute("style", attrs[k]);
+        else if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+      }
+    }
+    if (children) {
+      if (!Array.isArray(children)) children = [children];
+      children.forEach(function(c){
+        if (c == null) return;
+        if (typeof c === "string") n.appendChild(document.createTextNode(c));
+        else n.appendChild(c);
+      });
+    }
+    return n;
+  }
+  function truncate(s, n) {
+    if (s == null) return "";
+    s = String(s);
+    if (s.length <= n) return s;
+    return s.slice(0, n) + "...";
+  }
+  function fmtTime(t) {
+    if (!t) return "";
+    return String(t).replace("T", " ").split(".")[0];
+  }
+
+  function toast(msg, type) {
+    type = type || "info";
+    var t = el("div", { class: "toast " + type, text: msg });
+    var mount = $("#toast-mount");
+    mount.appendChild(t);
+    setTimeout(function(){
+      t.style.transition = "opacity 0.3s";
+      t.style.opacity = "0";
+      setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 300);
+    }, 3000);
+  }
+
+  function showModal(opts) {
+    closeModal();
+    var mount = $("#modal-mount");
+    var mask = el("div", { class: "modal-mask" });
+    var body = el("div", { class: "modal" });
+    if (opts.title) body.appendChild(el("h3", { text: opts.title }));
+    if (opts.content) {
+      if (typeof opts.content === "string") body.appendChild(el("div", { html: opts.content }));
+      else body.appendChild(opts.content);
+    }
+    if (opts.actions) {
+      var bar = el("div", { class: "actions" });
+      opts.actions.forEach(function(a){
+        var btn = el("button", { class: "btn " + (a.cls || ""), text: a.label });
+        btn.addEventListener("click", function(){ if (a.handler) a.handler(); });
+        bar.appendChild(btn);
+      });
+      body.appendChild(bar);
+    }
+    mask.appendChild(body);
+    mount.appendChild(mask);
+    mask.addEventListener("click", function(e){ if (e.target === mask) closeModal(); });
+    document.addEventListener("keydown", escClose);
+  }
+  function closeModal() {
+    var mount = $("#modal-mount");
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
+    document.removeEventListener("keydown", escClose);
+  }
+  function escClose(e) { if (e.key === "Escape") closeModal(); }
+
+  function confirmDialog(message, onYes) {
+    showModal({
+      title: "确认",
+      content: el("div", { text: message }),
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "确认", cls: "btn-danger", handler: function(){ closeModal(); onYes(); } }
+      ]
+    });
+  }
+
+  async function api(method, endpoint, params, body) {
+    if (!bridge) throw new Error("bridge not ready");
+    if (method === "GET") {
+      return await bridge.apiGet(endpoint, params || {});
+    }
+    if (method === "POST" && bridge.apiPost) {
+      return await bridge.apiPost(endpoint, body || {});
+    }
+    if (method === "PATCH" && bridge.apiPatch) {
+      return await bridge.apiPatch(endpoint, body || {});
+    }
+    if (method === "DELETE" && bridge.apiDelete) {
+      return await bridge.apiDelete(endpoint);
+    }
+    if (bridge.apiCall) {
+      return await bridge.apiCall(endpoint, { method: method, body: body });
+    }
+    if (bridge.request) {
+      return await bridge.request(endpoint, { method: method, body: body });
+    }
+    throw new Error("bridge does not support method " + method);
+  }
+  function apiGet(endpoint, params) { return api("GET", endpoint, params); }
+  function apiPost(endpoint, body) { return api("POST", endpoint, null, body); }
+  function apiPatch(endpoint, body) { return api("PATCH", endpoint, null, body); }
+  function apiDelete(endpoint) { return api("DELETE", endpoint); }
+
+  function switchTab(name) {
+    state.tab = name;
+    $$(".tab").forEach(function(t){
+      if (t.getAttribute("data-tab") === name) t.classList.add("active");
+      else t.classList.remove("active");
+    });
+    render();
+  }
+  function bindTabs() {
+    $$(".tab").forEach(function(t){
+      t.addEventListener("click", function(){ switchTab(t.getAttribute("data-tab")); });
+    });
+    $("#btn-refresh").addEventListener("click", function(){ render(); });
+  }
+
+  function render() {
+    var content = $("#content");
+    content.innerHTML = '<div class="loading-overlay"><span class="spinner"></span> 加载中...</div>';
+    if (state.tab === "overview") return renderOverview();
+    if (state.tab === "violations") return renderViolations();
+    if (state.tab === "audits") return renderAudits();
+    if (state.tab === "whitelist") return renderWhitelist();
+    if (state.tab === "users") return renderUsers();
+  }
+
+  function buildSimpleTable(headers, rows) {
+    var wrap = el("div", { class: "table-wrap" });
+    var tbl = el("table");
+    var thead = el("thead");
+    var trh = el("tr");
+    headers.forEach(function(h){ trh.appendChild(el("th", { text: h })); });
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
+    var tbody = el("tbody");
+    if (rows.length === 0) {
+      var trE = el("tr");
+      var tdE = el("td", { text: "暂无数据" });
+      tdE.setAttribute("colspan", headers.length);
+      tdE.style.textAlign = "center";
+      tdE.style.color = "var(--text-2)";
+      trE.appendChild(tdE);
+      tbody.appendChild(trE);
+    } else {
+      rows.forEach(function(row){
+        var tr = el("tr");
+        row.forEach(function(cell, i){
+          var td = el("td", { text: cell == null ? "" : String(cell) });
+          td.setAttribute("data-label", headers[i] || "");
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+    }
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    return wrap;
+  }
+
+  function buildPagination(page, pageSize, total, onChange) {
+    var totalPages = Math.max(1, Math.ceil(total / pageSize));
+    var box = el("div", { class: "pagination" });
+    var prev = el("button", { class: "btn btn-sm", text: "上一页" });
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", function(){ onChange(page - 1); });
+    var next = el("button", { class: "btn btn-sm", text: "下一页" });
+    next.disabled = page >= totalPages;
+    next.addEventListener("click", function(){ onChange(page + 1); });
+    box.appendChild(prev);
+    box.appendChild(el("div", { class: "info", text: "第 " + page + " 页 / 共 " + totalPages + " 页" }));
+    box.appendChild(next);
+    return box;
+  }
+
+  function makeInput(name, value, placeholder) {
+    var input = el("input", { type: "text", name: name, placeholder: placeholder || "" });
+    input.value = value || "";
+    return input;
+  }
+  function makeButton(text, cls, onClick) {
+    var b = el("button", { class: "btn " + (cls || ""), text: text });
+    b.addEventListener("click", onClick);
+    return b;
+  }
+  function makeFormRow(label, name, value, textarea) {
+    var row = el("div", { class: "form-row" });
+    row.appendChild(el("label", { text: label }));
+    var input;
+    if (textarea) input = el("textarea", { name: name });
+    else input = el("input", { type: "text", name: name });
+    input.value = value || "";
+    row.appendChild(input);
+    return row;
+  }
+
+  async function renderOverview() {
+    var content = $("#content");
+    try {
+      var data = await apiGet("stats/overview");
+      content.innerHTML = "";
+      var stats = data || {};
+      var totals = stats.totals || stats;
+      var grid = el("div", { class: "stat-grid" });
+      [
+        { label: "今日审核", value: totals.today_audits || 0 },
+        { label: "今日违规", value: totals.today_violations || 0 },
+        { label: "累计审核", value: totals.total_audits || 0 },
+        { label: "累计违规", value: totals.total_violations || 0 }
+      ].forEach(function(c){
+        grid.appendChild(el("div", { class: "stat-card" }, [
+          el("div", { class: "label", text: c.label }),
+          el("div", { class: "value", text: String(c.value) })
+        ]));
+      });
+      content.appendChild(grid);
+
+      content.appendChild(el("div", { class: "section-title", text: "近 7 天趋势" }));
+      var trend = stats.trend_7days || stats.trend || stats.daily || [];
+      var maxVal = 1;
+      trend.forEach(function(d){
+        if ((d.audits || 0) > maxVal) maxVal = d.audits;
+        if ((d.violations || 0) > maxVal) maxVal = d.violations;
+      });
+      var chart = el("div", { class: "chart" });
+      if (trend.length === 0) {
+        chart.appendChild(el("div", { class: "empty", text: "暂无数据" }));
+      } else {
+        trend.forEach(function(d){
+          var day = el("div", { class: "chart-day" });
+          var bars = el("div", { class: "chart-bars" });
+          var bAud = el("div", { class: "chart-bar" });
+          bAud.style.height = Math.max(1, Math.round((d.audits || 0) / maxVal * 100)) + "%";
+          bAud.title = "审核 " + (d.audits || 0);
+          var bVio = el("div", { class: "chart-bar violation" });
+          bVio.style.height = Math.max(1, Math.round((d.violations || 0) / maxVal * 100)) + "%";
+          bVio.title = "违规 " + (d.violations || 0);
+          bars.appendChild(bAud);
+          bars.appendChild(bVio);
+          day.appendChild(bars);
+          day.appendChild(el("div", { class: "chart-label", text: (d.date || "").slice(5) }));
+          chart.appendChild(day);
+        });
+      }
+      content.appendChild(chart);
+      var legend = el("div", { class: "legend" });
+      var li1 = el("div", { class: "legend-item" });
+      var dot1 = el("div", { class: "legend-dot" });
+      dot1.style.background = "var(--primary)";
+      li1.appendChild(dot1);
+      li1.appendChild(document.createTextNode("审核"));
+      var li2 = el("div", { class: "legend-item" });
+      var dot2 = el("div", { class: "legend-dot" });
+      dot2.style.background = "var(--danger)";
+      li2.appendChild(dot2);
+      li2.appendChild(document.createTextNode("违规"));
+      legend.appendChild(li1);
+      legend.appendChild(li2);
+      content.appendChild(legend);
+
+      var dual = el("div", { class: "dual-col" });
+      var col1 = el("div");
+      col1.appendChild(el("div", { class: "section-title", text: "Top 10 违规用户" }));
+      var topUsers = stats.top_violators || stats.top_users || [];
+      col1.appendChild(buildSimpleTable(
+        ["用户ID", "昵称", "违规次数"],
+        topUsers.map(function(u){ return [u.user_id, u.nickname || "-", u.violation_count || 0]; })
+      ));
+      dual.appendChild(col1);
+      var col2 = el("div");
+      col2.appendChild(el("div", { class: "section-title", text: "各群分布" }));
+      var groups = stats.group_distribution || stats.groups || [];
+      col2.appendChild(buildSimpleTable(
+        ["群号", "审核数", "违规数"],
+        groups.map(function(g){ return [g.group_id, g.audits || 0, g.violations || 0]; })
+      ));
+      dual.appendChild(col2);
+      content.appendChild(dual);
+    } catch (e) {
+      content.innerHTML = "";
+      content.appendChild(el("div", { class: "empty", text: "加载失败: " + (e.message || e) }));
+      toast("加载概览失败: " + (e.message || e), "error");
+    }
+  }
+
+  async function renderViolations() {
+    var content = $("#content");
+    var s = state.violations;
+    var filter = el("div", { class: "filter-bar" });
+    var inGid = makeInput("group_id", s.group_id, "群号");
+    var inUid = makeInput("user_id", s.user_id, "用户ID");
+    var inKw = makeInput("keyword", s.keyword, "关键字");
+    filter.appendChild(inGid);
+    filter.appendChild(inUid);
+    filter.appendChild(inKw);
+    filter.appendChild(makeButton("搜索", "btn-primary", function(){
+      s.group_id = inGid.value.trim();
+      s.user_id = inUid.value.trim();
+      s.keyword = inKw.value.trim();
+      s.page = 1;
+      renderViolations();
+    }));
+
+    var selectedIds = Object.keys(s.selected).filter(function(k){ return s.selected[k]; });
+    var toolbar = el("div", { class: "toolbar" });
+    var btnBatch = el("button", { class: "btn btn-danger", text: "批量删除 (" + selectedIds.length + ")" });
+    btnBatch.disabled = selectedIds.length === 0;
+    btnBatch.addEventListener("click", function(){
+      confirmDialog("确认删除选中的 " + selectedIds.length + " 条违规记录？", async function(){
+        try {
+          await apiPost("violations/batch_delete", { ids: selectedIds.map(function(x){ return parseInt(x, 10); }) });
+          toast("批量删除成功", "success");
+          s.selected = {};
+          renderViolations();
+        } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+      });
+    });
+    toolbar.appendChild(btnBatch);
+    toolbar.appendChild(el("div", { class: "info", text: "共 " + s.total + " 条" }));
+
+    content.innerHTML = "";
+    content.appendChild(filter);
+    content.appendChild(toolbar);
+    var loading = el("div", { class: "loading-overlay", html: '<span class="spinner"></span> 加载中...' });
+    content.appendChild(loading);
+
+    try {
+      var data = await apiGet("violations", {
+        page: s.page, page_size: s.page_size,
+        group_id: s.group_id, user_id: s.user_id, keyword: s.keyword
+      });
+      s.items = data.items || [];
+      s.total = data.total || 0;
+      content.removeChild(loading);
+
+      var wrap = el("div", { class: "table-wrap" });
+      var tbl = el("table");
+      var thead = el("thead");
+      var trh = el("tr");
+      ["", "ID", "时间", "群", "用户", "内容预览", "措施", "备注", "操作"].forEach(function(h){
+        trh.appendChild(el("th", { text: h }));
+      });
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      var tbody = el("tbody");
+      if (s.items.length === 0) {
+        var trE = el("tr");
+        var tdE = el("td", { text: "暂无数据" });
+        tdE.setAttribute("colspan", 9);
+        tdE.style.textAlign = "center";
+        tdE.style.color = "var(--text-2)";
+        trE.appendChild(tdE);
+        tbody.appendChild(trE);
+      } else {
+        s.items.forEach(function(row){
+          var tr = el("tr");
+          var cb = el("input", { type: "checkbox" });
+          cb.checked = !!s.selected[row.id];
+          cb.addEventListener("change", function(){
+            if (cb.checked) s.selected[row.id] = true;
+            else delete s.selected[row.id];
+            renderViolations();
+          });
+          var tdCb = el("td"); tdCb.setAttribute("data-label", "选择"); tdCb.appendChild(cb); tr.appendChild(tdCb);
+          var tdId = el("td", { text: String(row.id) }); tdId.setAttribute("data-label", "ID"); tr.appendChild(tdId);
+          var tdT = el("td", { text: fmtTime(row.created_at) }); tdT.setAttribute("data-label", "时间"); tr.appendChild(tdT);
+          var tdG = el("td", { text: row.group_id || "-" }); tdG.setAttribute("data-label", "群"); tr.appendChild(tdG);
+          var tdU = el("td", { text: (row.user_name || "") + " (" + (row.user_id || "") + ")" }); tdU.setAttribute("data-label", "用户"); tr.appendChild(tdU);
+          var tdP = el("td", { class: "preview", text: truncate(row.text_preview || "", 60) }); tdP.setAttribute("data-label", "内容"); tr.appendChild(tdP);
+          var actions = [];
+          if (row.action_recall) actions.push("撤回");
+          if (row.action_mute) actions.push("禁言" + (row.mute_duration || 0) + "s");
+          var tdA = el("td", { text: actions.join(" / ") || "-" }); tdA.setAttribute("data-label", "措施"); tr.appendChild(tdA);
+          var tdN = el("td", { text: row.note || "-" }); tdN.setAttribute("data-label", "备注"); tr.appendChild(tdN);
+          var tdOps = el("td"); tdOps.setAttribute("data-label", "操作");
+          var btnEdit = el("button", { class: "btn btn-sm", text: "改" });
+          btnEdit.addEventListener("click", function(){ openEditViolation(row); });
+          var btnDel = el("button", { class: "btn btn-sm btn-danger", text: "删" });
+          btnDel.style.marginLeft = "4px";
+          btnDel.addEventListener("click", function(){
+            confirmDialog("确认删除违规 #" + row.id + " ？", async function(){
+              try {
+                await apiDelete("violations/" + row.id);
+                toast("已删除", "success");
+                renderViolations();
+              } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+            });
+          });
+          tdOps.appendChild(btnEdit); tdOps.appendChild(btnDel);
+          tr.appendChild(tdOps);
+          tbody.appendChild(tr);
+        });
+      }
+      tbl.appendChild(tbody);
+      wrap.appendChild(tbl);
+      content.appendChild(wrap);
+      content.appendChild(buildPagination(s.page, s.page_size, s.total, function(p){ s.page = p; renderViolations(); }));
+    } catch (e) {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      content.appendChild(el("div", { class: "empty", text: "加载失败: " + (e.message || e) }));
+      toast("加载违规列表失败: " + (e.message || e), "error");
+    }
+  }
+
+  function openEditViolation(row) {
+    var form = el("div");
+    form.appendChild(makeFormRow("用户名", "user_name", row.user_name || ""));
+    form.appendChild(makeFormRow("内容预览", "text_preview", row.text_preview || "", true));
+    form.appendChild(makeFormRow("备注", "note", row.note || "", true));
+    showModal({
+      title: "编辑违规 #" + row.id,
+      content: form,
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "保存", cls: "btn-primary", handler: async function(){
+          var body = {
+            user_name: form.querySelector('[name="user_name"]').value,
+            text_preview: form.querySelector('[name="text_preview"]').value,
+            note: form.querySelector('[name="note"]').value
+          };
+          try {
+            await apiPatch("violations/" + row.id, body);
+            toast("已保存", "success");
+            closeModal();
+            renderViolations();
+          } catch (e) { toast("保存失败: " + (e.message || e), "error"); }
+        }}
+      ]
+    });
+  }
+
+  async function renderAudits() {
+    var content = $("#content");
+    var s = state.audits;
+    var filter = el("div", { class: "filter-bar" });
+    var inGid = makeInput("group_id", s.group_id, "群号");
+    filter.appendChild(inGid);
+    var sel = el("select", { name: "has_violation" });
+    [["", "全部"], ["1", "违规"], ["0", "正常"]].forEach(function(opt){
+      var o = el("option", { value: opt[0], text: opt[1] });
+      if (s.has_violation === opt[0]) o.selected = true;
+      sel.appendChild(o);
+    });
+    filter.appendChild(sel);
+    var inKw = makeInput("keyword", s.keyword, "关键字");
+    filter.appendChild(inKw);
+    filter.appendChild(makeButton("搜索", "btn-primary", function(){
+      s.group_id = inGid.value.trim();
+      s.has_violation = sel.value;
+      s.keyword = inKw.value.trim();
+      s.page = 1;
+      renderAudits();
+    }));
+
+    var selectedIds = Object.keys(s.selected).filter(function(k){ return s.selected[k]; });
+    var toolbar = el("div", { class: "toolbar" });
+    var btnBatch = el("button", { class: "btn btn-danger", text: "批量删除 (" + selectedIds.length + ")" });
+    btnBatch.disabled = selectedIds.length === 0;
+    btnBatch.addEventListener("click", function(){
+      confirmDialog("确认删除选中的 " + selectedIds.length + " 条审计日志？", async function(){
+        try {
+          await apiPost("audits/batch_delete", { ids: selectedIds.map(function(x){ return parseInt(x, 10); }) });
+          toast("批量删除成功", "success");
+          s.selected = {};
+          renderAudits();
+        } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+      });
+    });
+    toolbar.appendChild(btnBatch);
+    toolbar.appendChild(el("div", { class: "info", text: "共 " + s.total + " 条" }));
+
+    content.innerHTML = "";
+    content.appendChild(filter);
+    content.appendChild(toolbar);
+    var loading = el("div", { class: "loading-overlay", html: '<span class="spinner"></span> 加载中...' });
+    content.appendChild(loading);
+
+    try {
+      var data = await apiGet("audits", {
+        page: s.page, page_size: s.page_size,
+        group_id: s.group_id, has_violation: s.has_violation, keyword: s.keyword
+      });
+      s.items = data.items || [];
+      s.total = data.total || 0;
+      content.removeChild(loading);
+
+      var wrap = el("div", { class: "table-wrap" });
+      var tbl = el("table");
+      var thead = el("thead");
+      var trh = el("tr");
+      ["", "ID", "时间", "群", "用户", "内容预览", "违规", "来源", "操作"].forEach(function(h){
+        trh.appendChild(el("th", { text: h }));
+      });
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      var tbody = el("tbody");
+      if (s.items.length === 0) {
+        var trE = el("tr");
+        var tdE = el("td", { text: "暂无数据" });
+        tdE.setAttribute("colspan", 9);
+        tdE.style.textAlign = "center";
+        tdE.style.color = "var(--text-2)";
+        trE.appendChild(tdE);
+        tbody.appendChild(trE);
+      } else {
+        s.items.forEach(function(row){
+          var tr = el("tr");
+          var cb = el("input", { type: "checkbox" });
+          cb.checked = !!s.selected[row.id];
+          cb.addEventListener("change", function(){
+            if (cb.checked) s.selected[row.id] = true;
+            else delete s.selected[row.id];
+            renderAudits();
+          });
+          var tdCb = el("td"); tdCb.setAttribute("data-label", "选择"); tdCb.appendChild(cb); tr.appendChild(tdCb);
+          var tdId = el("td", { text: String(row.id) }); tdId.setAttribute("data-label", "ID"); tr.appendChild(tdId);
+          var tdT = el("td", { text: fmtTime(row.created_at) }); tdT.setAttribute("data-label", "时间"); tr.appendChild(tdT);
+          var tdG = el("td", { text: row.group_id || "-" }); tdG.setAttribute("data-label", "群"); tr.appendChild(tdG);
+          var tdU = el("td", { text: (row.user_name || "") + " (" + (row.user_id || "") + ")" }); tdU.setAttribute("data-label", "用户"); tr.appendChild(tdU);
+          var tdP = el("td", { class: "preview", text: truncate(row.text_preview || "", 60) }); tdP.setAttribute("data-label", "内容"); tr.appendChild(tdP);
+          var tdV = el("td"); tdV.setAttribute("data-label", "违规");
+          tdV.appendChild(el("span", {
+            class: "badge " + (row.has_violation ? "badge-danger" : "badge-success"),
+            text: row.has_violation ? "是" : "否"
+          }));
+          tr.appendChild(tdV);
+          var tdS = el("td", { text: row.source || "-" }); tdS.setAttribute("data-label", "来源"); tr.appendChild(tdS);
+          var tdOps = el("td"); tdOps.setAttribute("data-label", "操作");
+          var btnView = el("button", { class: "btn btn-sm", text: "详情" });
+          btnView.addEventListener("click", function(){ openAuditDetail(row.id); });
+          var btnDel = el("button", { class: "btn btn-sm btn-danger", text: "删" });
+          btnDel.style.marginLeft = "4px";
+          btnDel.addEventListener("click", function(){
+            confirmDialog("确认删除审计 #" + row.id + " ？", async function(){
+              try {
+                await apiDelete("audits/" + row.id);
+                toast("已删除", "success");
+                renderAudits();
+              } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+            });
+          });
+          tdOps.appendChild(btnView); tdOps.appendChild(btnDel);
+          tr.appendChild(tdOps);
+          tbody.appendChild(tr);
+        });
+      }
+      tbl.appendChild(tbody);
+      wrap.appendChild(tbl);
+      content.appendChild(wrap);
+      content.appendChild(buildPagination(s.page, s.page_size, s.total, function(p){ s.page = p; renderAudits(); }));
+    } catch (e) {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      content.appendChild(el("div", { class: "empty", text: "加载失败: " + (e.message || e) }));
+      toast("加载审计列表失败: " + (e.message || e), "error");
+    }
+  }
+
+  async function openAuditDetail(aid) {
+    try {
+      var data = await apiGet("audits/" + aid);
+      var box = el("div");
+      function row(label, val) {
+        var d = el("div", { class: "form-row" });
+        d.appendChild(el("label", { text: label }));
+        d.appendChild(el("div", { class: "readonly-block", text: val == null ? "" : String(val) }));
+        return d;
+      }
+      box.appendChild(row("时间", fmtTime(data.created_at)));
+      box.appendChild(row("群号", data.group_id || ""));
+      box.appendChild(row("用户", (data.user_name || "") + " (" + (data.user_id || "") + ")"));
+      box.appendChild(row("来源", data.source || ""));
+      box.appendChild(row("是否违规", data.has_violation ? "是" : "否"));
+      box.appendChild(row("内容原文", data.text_preview || ""));
+      if (data.request_id) box.appendChild(row("请求ID", data.request_id));
+      if (data.raw_response) box.appendChild(row("Raw Response", data.raw_response));
+      showModal({
+        title: "审计详情 #" + aid,
+        content: box,
+        actions: [{ label: "关闭", handler: closeModal }]
+      });
+    } catch (e) {
+      toast("加载详情失败: " + (e.message || e), "error");
+    }
+  }
+
+  async function renderWhitelist() {
+    var content = $("#content");
+    var toolbar = el("div", { class: "toolbar" });
+    var btnAdd = el("button", { class: "btn btn-primary", text: "+ 新增" });
+    btnAdd.addEventListener("click", openCreateWhitelist);
+    toolbar.appendChild(btnAdd);
+    var info = el("div", { class: "info", text: "共 " + state.whitelist.items.length + " 项" });
+    toolbar.appendChild(info);
+
+    content.innerHTML = "";
+    content.appendChild(toolbar);
+    var loading = el("div", { class: "loading-overlay", html: '<span class="spinner"></span> 加载中...' });
+    content.appendChild(loading);
+
+    try {
+      var data = await apiGet("whitelist");
+      state.whitelist.items = (data && data.items) || [];
+      info.textContent = "共 " + state.whitelist.items.length + " 项";
+      content.removeChild(loading);
+
+      var wrap = el("div", { class: "table-wrap" });
+      var tbl = el("table");
+      var thead = el("thead");
+      var trh = el("tr");
+      ["ID", "QQ号", "备注", "添加时间", "操作"].forEach(function(h){
+        trh.appendChild(el("th", { text: h }));
+      });
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      var tbody = el("tbody");
+      if (state.whitelist.items.length === 0) {
+        var trE = el("tr");
+        var tdE = el("td", { text: "暂无数据" });
+        tdE.setAttribute("colspan", 5);
+        tdE.style.textAlign = "center";
+        tdE.style.color = "var(--text-2)";
+        trE.appendChild(tdE);
+        tbody.appendChild(trE);
+      } else {
+        state.whitelist.items.forEach(function(row){
+          var tr = el("tr");
+          var tdId = el("td", { text: String(row.id) }); tdId.setAttribute("data-label", "ID"); tr.appendChild(tdId);
+          var tdU = el("td", { text: row.user_id || "" }); tdU.setAttribute("data-label", "QQ号"); tr.appendChild(tdU);
+          var tdN = el("td", { text: row.note || "-" }); tdN.setAttribute("data-label", "备注"); tr.appendChild(tdN);
+          var tdT = el("td", { text: fmtTime(row.created_at) }); tdT.setAttribute("data-label", "添加时间"); tr.appendChild(tdT);
+          var tdOps = el("td"); tdOps.setAttribute("data-label", "操作");
+          var btnEdit = el("button", { class: "btn btn-sm", text: "改备注" });
+          btnEdit.addEventListener("click", function(){ openEditWhitelist(row); });
+          var btnDel = el("button", { class: "btn btn-sm btn-danger", text: "删" });
+          btnDel.style.marginLeft = "4px";
+          btnDel.addEventListener("click", function(){
+            confirmDialog("确认从白名单删除 QQ:" + row.user_id + " ？", async function(){
+              try {
+                await apiDelete("whitelist/" + row.id);
+                toast("已删除", "success");
+                renderWhitelist();
+              } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+            });
+          });
+          tdOps.appendChild(btnEdit); tdOps.appendChild(btnDel);
+          tr.appendChild(tdOps);
+          tbody.appendChild(tr);
+        });
+      }
+      tbl.appendChild(tbody);
+      wrap.appendChild(tbl);
+      content.appendChild(wrap);
+    } catch (e) {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      content.appendChild(el("div", { class: "empty", text: "加载失败: " + (e.message || e) }));
+      toast("加载白名单失败: " + (e.message || e), "error");
+    }
+  }
+
+  function openCreateWhitelist() {
+    var form = el("div");
+    form.appendChild(makeFormRow("QQ号", "user_id", ""));
+    form.appendChild(makeFormRow("备注", "note", "", true));
+    showModal({
+      title: "添加白名单",
+      content: form,
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "保存", cls: "btn-primary", handler: async function(){
+          var uid = form.querySelector('[name="user_id"]').value.trim();
+          if (!uid) { toast("请输入 QQ 号", "error"); return; }
+          var note = form.querySelector('[name="note"]').value;
+          try {
+            await apiPost("whitelist", { user_id: uid, note: note });
+            toast("已添加", "success");
+            closeModal();
+            renderWhitelist();
+          } catch (e) { toast("添加失败: " + (e.message || e), "error"); }
+        }}
+      ]
+    });
+  }
+  function openEditWhitelist(row) {
+    var form = el("div");
+    form.appendChild(makeFormRow("备注", "note", row.note || "", true));
+    showModal({
+      title: "编辑白名单备注 #" + row.id,
+      content: form,
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "保存", cls: "btn-primary", handler: async function(){
+          var note = form.querySelector('[name="note"]').value;
+          try {
+            await apiPatch("whitelist/" + row.id, { note: note });
+            toast("已保存", "success");
+            closeModal();
+            renderWhitelist();
+          } catch (e) { toast("保存失败: " + (e.message || e), "error"); }
+        }}
+      ]
+    });
+  }
+
+  async function renderUsers() {
+    var content = $("#content");
+    var s = state.users;
+    var filter = el("div", { class: "filter-bar" });
+    var sel = el("select", { name: "status" });
+    [["", "全部状态"], ["normal", "normal"], ["watched", "watched"], ["blacklist", "blacklist"], ["whitelist", "whitelist"]].forEach(function(opt){
+      var o = el("option", { value: opt[0], text: opt[1] });
+      if (s.status === opt[0]) o.selected = true;
+      sel.appendChild(o);
+    });
+    filter.appendChild(sel);
+    var inKw = makeInput("keyword", s.keyword, "关键字（QQ/昵称）");
+    filter.appendChild(inKw);
+    filter.appendChild(makeButton("搜索", "btn-primary", function(){
+      s.status = sel.value;
+      s.keyword = inKw.value.trim();
+      s.page = 1;
+      renderUsers();
+    }));
+
+    var toolbar = el("div", { class: "toolbar" });
+    var btnAdd = el("button", { class: "btn btn-primary", text: "+ 新增" });
+    btnAdd.addEventListener("click", openCreateUser);
+    toolbar.appendChild(btnAdd);
+    toolbar.appendChild(el("div", { class: "info", text: "共 " + s.total + " 条" }));
+
+    content.innerHTML = "";
+    content.appendChild(filter);
+    content.appendChild(toolbar);
+    var loading = el("div", { class: "loading-overlay", html: '<span class="spinner"></span> 加载中...' });
+    content.appendChild(loading);
+
+    try {
+      var data = await apiGet("users", { page: s.page, page_size: s.page_size, keyword: s.keyword, status: s.status });
+      s.items = data.items || [];
+      s.total = data.total || 0;
+      content.removeChild(loading);
+
+      var wrap = el("div", { class: "table-wrap" });
+      var tbl = el("table");
+      var thead = el("thead");
+      var trh = el("tr");
+      ["QQ号", "昵称", "状态", "违规次数", "群", "首次出现", "最后出现", "备注", "操作"].forEach(function(h){
+        trh.appendChild(el("th", { text: h }));
+      });
+      thead.appendChild(trh);
+      tbl.appendChild(thead);
+      var tbody = el("tbody");
+      if (s.items.length === 0) {
+        var trE = el("tr");
+        var tdE = el("td", { text: "暂无数据" });
+        tdE.setAttribute("colspan", 9);
+        tdE.style.textAlign = "center";
+        tdE.style.color = "var(--text-2)";
+        trE.appendChild(tdE);
+        tbody.appendChild(trE);
+      } else {
+        s.items.forEach(function(row){
+          var tr = el("tr");
+          var tdU = el("td", { text: row.user_id || "" }); tdU.setAttribute("data-label", "QQ号"); tr.appendChild(tdU);
+          var tdN = el("td", { text: row.nickname || "-" }); tdN.setAttribute("data-label", "昵称"); tr.appendChild(tdN);
+          var tdS = el("td"); tdS.setAttribute("data-label", "状态");
+          tdS.appendChild(el("span", {
+            class: "badge " + statusBadgeCls(row.status),
+            text: row.status || "normal"
+          }));
+          tr.appendChild(tdS);
+          var tdC = el("td", { text: String(row.violation_count || 0) }); tdC.setAttribute("data-label", "违规次数"); tr.appendChild(tdC);
+          var groups = row.group_ids;
+          if (typeof groups === "string") {
+            try { groups = JSON.parse(groups); } catch(e) { groups = []; }
+          }
+          if (!Array.isArray(groups)) groups = [];
+          var tdG = el("td"); tdG.setAttribute("data-label", "群");
+          if (groups.length === 0) tdG.appendChild(document.createTextNode("-"));
+          else groups.forEach(function(gid){ tdG.appendChild(el("span", { class: "chip", text: gid })); });
+          tr.appendChild(tdG);
+          var tdF = el("td", { text: fmtTime(row.first_seen_at) }); tdF.setAttribute("data-label", "首次出现"); tr.appendChild(tdF);
+          var tdL = el("td", { text: fmtTime(row.last_seen_at) }); tdL.setAttribute("data-label", "最后出现"); tr.appendChild(tdL);
+          var tdNt = el("td", { text: row.note || "-" }); tdNt.setAttribute("data-label", "备注"); tr.appendChild(tdNt);
+          var tdOps = el("td"); tdOps.setAttribute("data-label", "操作");
+          var btnEdit = el("button", { class: "btn btn-sm", text: "改" });
+          btnEdit.addEventListener("click", function(){ openEditUser(row); });
+          var btnDel = el("button", { class: "btn btn-sm btn-danger", text: "删" });
+          btnDel.style.marginLeft = "4px";
+          btnDel.addEventListener("click", function(){
+            confirmDialog("确认删除用户档案 QQ:" + row.user_id + " ？", async function(){
+              try {
+                await apiDelete("users/" + encodeURIComponent(row.user_id));
+                toast("已删除", "success");
+                renderUsers();
+              } catch (e) { toast("删除失败: " + (e.message || e), "error"); }
+            });
+          });
+          tdOps.appendChild(btnEdit); tdOps.appendChild(btnDel);
+          tr.appendChild(tdOps);
+          tbody.appendChild(tr);
+        });
+      }
+      tbl.appendChild(tbody);
+      wrap.appendChild(tbl);
+      content.appendChild(wrap);
+      content.appendChild(buildPagination(s.page, s.page_size, s.total, function(p){ s.page = p; renderUsers(); }));
+    } catch (e) {
+      if (loading.parentNode) loading.parentNode.removeChild(loading);
+      content.appendChild(el("div", { class: "empty", text: "加载失败: " + (e.message || e) }));
+      toast("加载用户列表失败: " + (e.message || e), "error");
+    }
+  }
+
+  function statusBadgeCls(s) {
+    if (s === "blacklist") return "badge-danger";
+    if (s === "watched") return "badge-warn";
+    if (s === "whitelist") return "badge-success";
+    return "badge-muted";
+  }
+
+  function buildUserForm(row, editMode) {
+    var form = el("div");
+    if (!editMode) form.appendChild(makeFormRow("QQ号", "user_id", row.user_id || ""));
+    form.appendChild(makeFormRow("昵称", "nickname", row.nickname || ""));
+    var statusRow = el("div", { class: "form-row" });
+    statusRow.appendChild(el("label", { text: "状态" }));
+    var sel = el("select", { name: "status" });
+    ["normal", "watched", "blacklist", "whitelist"].forEach(function(opt){
+      var o = el("option", { value: opt, text: opt });
+      if ((row.status || "normal") === opt) o.selected = true;
+      sel.appendChild(o);
+    });
+    statusRow.appendChild(sel);
+    form.appendChild(statusRow);
+    var groups = row.group_ids;
+    if (typeof groups === "string") {
+      try { groups = JSON.parse(groups); } catch(e) { groups = []; }
+    }
+    if (!Array.isArray(groups)) groups = [];
+    form.appendChild(makeFormRow("所在群（逗号分隔）", "group_ids", groups.join(",")));
+    form.appendChild(makeFormRow("备注", "note", row.note || "", true));
+    return form;
+  }
+  function readUserForm(form) {
+    var body = {};
+    var uidInput = form.querySelector('[name="user_id"]');
+    if (uidInput) body.user_id = uidInput.value.trim();
+    body.nickname = form.querySelector('[name="nickname"]').value;
+    body.status = form.querySelector('[name="status"]').value;
+    var grpStr = form.querySelector('[name="group_ids"]').value;
+    body.group_ids = grpStr.split(",").map(function(x){ return x.trim(); }).filter(function(x){ return x; });
+    body.note = form.querySelector('[name="note"]').value;
+    return body;
+  }
+  function openCreateUser() {
+    var form = buildUserForm({ status: "normal" }, false);
+    showModal({
+      title: "新增用户档案",
+      content: form,
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "保存", cls: "btn-primary", handler: async function(){
+          var body = readUserForm(form);
+          if (!body.user_id) { toast("请输入 QQ 号", "error"); return; }
+          try {
+            await apiPost("users", body);
+            toast("已添加", "success");
+            closeModal();
+            renderUsers();
+          } catch (e) { toast("添加失败: " + (e.message || e), "error"); }
+        }}
+      ]
+    });
+  }
+  function openEditUser(row) {
+    var form = buildUserForm(row, true);
+    showModal({
+      title: "编辑用户档案 " + row.user_id,
+      content: form,
+      actions: [
+        { label: "取消", handler: closeModal },
+        { label: "保存", cls: "btn-primary", handler: async function(){
+          var body = readUserForm(form);
+          delete body.user_id;
+          try {
+            await apiPatch("users/" + encodeURIComponent(row.user_id), body);
+            toast("已保存", "success");
+            closeModal();
+            renderUsers();
+          } catch (e) { toast("保存失败: " + (e.message || e), "error"); }
+        }}
+      ]
+    });
+  }
+
+  async function init() {
+    bridge = window.AstrBotPluginPage;
+    if (!bridge) {
+      $("#content").innerHTML = '<div class="empty">Bridge SDK 未注入，请通过 AstrBot Dashboard 打开本页</div>';
+      return;
+    }
+    try { await bridge.ready(); } catch (e) { /* ignore */ }
+    bindTabs();
+    render();
+  }
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
+})();
+</script>
+</body>
+</html>

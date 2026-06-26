@@ -188,6 +188,9 @@ cython_debug/
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
+# Design docs / review reports (not for distribution)
+docs/
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -205,3 +208,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# AstrBot 开发过程文件（不提交）
+开发/

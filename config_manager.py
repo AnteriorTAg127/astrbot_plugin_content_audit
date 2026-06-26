@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from astrbot.api import logger
 
@@ -14,11 +14,40 @@ if TYPE_CHECKING:
 class ConfigManager:
     """从 _conf_schema.json 定义的配置项中读取和管理配置"""
 
-    def __init__(self, config_getter: Callable[[], dict], stats_manager: StatsManager, on_reload: Callable[[dict], None] | None = None):
+    @staticmethod
+    def _safe_copy_config(config: dict) -> dict:
+        """安全地深度复制配置字典。
+
+        copy.deepcopy 可能因框架配置中含不支持深复制的对象而失败，
+        此方法手动递归复制 dict/list，其他类型直接引用（配置中不会有可变对象）。
+        """
+        result: dict = {}
+        for key, value in config.items():
+            if isinstance(value, dict):
+                result[key] = ConfigManager._safe_copy_config(value)
+            elif isinstance(value, list):
+                result[key] = [
+                    ConfigManager._safe_copy_config(v) if isinstance(v, dict) else v
+                    for v in value
+                ]
+            else:
+                result[key] = value
+        return result
+
+    def __init__(
+        self,
+        config_getter: Callable[[], dict],
+        stats_manager: StatsManager,
+        on_reload: Callable[[dict], None] | None = None,
+    ):
         self._config_getter = config_getter
         self._stats_manager = stats_manager
         self._on_reload = on_reload
         self.config = self._config_getter()
+        # _config_snapshot: 用于检测配置变更的深拷贝锚点
+        # maybe_reload() 将当前配置与此快照比较，而非与 self.config 比较
+        # （因为 _config_getter 和 self.config 指向同一 dict 对象）
+        self._config_snapshot = self._safe_copy_config(self.config)
         # 将 group_settings 解析为以 group_id 为键的字典，方便快速查找
         self._group_configs: dict[str, dict] = {}
         self._config_version: int = 0
@@ -36,10 +65,7 @@ class ConfigManager:
             if not group_id:
                 continue
             if group_id in seen:
-                logger.warning(
-                    f"group_settings 中存在重复的 group_id={group_id}, "
-                    f"后出现的条目将覆盖先前的配置"
-                )
+                logger.warning(f"group_settings 中存在重复的 group_id={group_id}, 后出现的条目将覆盖先前的配置")
             seen.add(group_id)
             config_copy = dict(gs)
             schedule_str = config_copy.get("auto_censor_schedule", "")
@@ -113,12 +139,13 @@ class ConfigManager:
         if not whitelist.get("enabled", False):
             return False
         now = asyncio.get_event_loop().time()
-        if (self._whitelist_cache is None
-                or now - self._whitelist_cache_time > self._whitelist_cache_ttl):
+        if self._whitelist_cache is None or now - self._whitelist_cache_time > self._whitelist_cache_ttl:
             users = await self._stats_manager.get_whitelist()
-            self._whitelist_cache = set(users)
-            self._whitelist_cache_time = now
-        return user_id in self._whitelist_cache
+            if users is not None:
+                self._whitelist_cache = set(users)
+                self._whitelist_cache_time = now
+            # 若 users 为 None（DB 错误），保留旧缓存，下次重试
+        return user_id in (self._whitelist_cache or set())
 
     def invalidate_whitelist_cache(self) -> None:
         self._whitelist_cache = None
@@ -171,6 +198,7 @@ class ConfigManager:
 
     def reload(self) -> None:
         self.config = self._config_getter()
+        self._config_snapshot = self._safe_copy_config(self.config)
         self._group_configs.clear()
         self._parse_group_settings()
         self._config_version += 1
@@ -181,8 +209,9 @@ class ConfigManager:
         new_config = self._config_getter()
         tracked_sections = ["api", "audit", "action", "notify", "whitelist", "group_settings"]
         for section in tracked_sections:
-            if new_config.get(section) != self.config.get(section):
+            if new_config.get(section) != self._config_snapshot.get(section):
                 self.config = new_config
+                self._config_snapshot = self._safe_copy_config(new_config)
                 self._group_configs.clear()
                 self._parse_group_settings()
                 self._config_version += 1
@@ -192,7 +221,7 @@ class ConfigManager:
         return False
 
     # 群级直读配置的默认值（不再依赖全局 section 回退）
-    _DEFAULTS: dict[str, object] = {
+    _DEFAULTS: ClassVar[dict[str, object]] = {
         "skip_admin": True,
         "skip_llm": False,
         "min_text_length": 2,
@@ -202,21 +231,56 @@ class ConfigManager:
         "context_max_messages": 5,
     }
 
+    # 配置项类型期望（用于防御性类型强制转换）
+    _TYPE_MAP: ClassVar[dict[str, type]] = {
+        "skip_admin": bool,
+        "skip_llm": bool,
+        "min_text_length": int,
+        "auto_recall": bool,
+        "auto_mute": bool,
+        "context_enabled": bool,
+        "context_max_messages": int,
+        "enable_auto_censor": bool,
+        "auto_censor_no_admin_minutes": int,
+    }
+
+    def _coerce_type(self, key: str, value: object) -> object:
+        """将配置值强制转换为期望类型，失败时使用默认值"""
+        expected = self._TYPE_MAP.get(key)
+        if expected is None or value is None:
+            return value
+        if isinstance(value, expected):
+            return value
+        if expected is bool:
+            # bool 是 int 的子类，需优先处理
+            if isinstance(value, str):
+                return value.lower() not in ("0", "false", "no", "")
+            return bool(value)
+        try:
+            return expected(value)
+        except (ValueError, TypeError):
+            logger.warning(f"配置项 {key} 类型错误: {value!r} (期望 {expected.__name__})，使用默认值")
+            return self._DEFAULTS.get(key, value)
+
     def get_effective_config(self, group_id: str, key: str, default=None):
         """从群设置中读取配置值。
 
         查找顺序（兼容旧版 override_* 键）：
         1. group_config[key] 直接命中（新版扁平字段）
-        2. group_config[f"override_{key}"] 且非 None（旧版兼容）
+        2. override_{key}（旧版兼容，仅当扁平字段不存在时）
         3. 内置默认值
         4. 调用方传入的 default
         """
         group_config = self._group_configs.get(group_id, {})
+        raw = None
         if key in group_config and group_config[key] is not None:
-            return group_config[key]
-        override_key = f"override_{key}"
-        if override_key in group_config and group_config[override_key] is not None:
-            return group_config[override_key]
-        if key in self._DEFAULTS:
-            return self._DEFAULTS[key]
+            raw = group_config[key]
+        if raw is None:
+            override_key = f"override_{key}"
+            if override_key in group_config and group_config[override_key] is not None:
+                raw = group_config[override_key]
+        if raw is None and key in self._DEFAULTS:
+            raw = self._DEFAULTS[key]
+        if raw is not None:
+            return self._coerce_type(key, raw)
         return default

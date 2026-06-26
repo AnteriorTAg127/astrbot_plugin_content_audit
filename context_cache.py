@@ -72,6 +72,11 @@ class ContextCache:
             lines.append(f"{sender}：{safe_text}")
 
         full = "\n".join(lines)
+        # 截断时保留最新的消息（从尾部截断），而非从头部
+        # 先尝试逐条移除最旧消息（从 lines[1] 开始），直到总长度 <= 2000
+        while len(full) > 2000 and len(lines) > 3:
+            lines.pop(1)  # 移除最旧的那条消息（首条消息在 lines[2]，header 在 lines[0]）
+            full = "\n".join(lines)
         return full[:2000]
 
     def clear_group(self, group_id: str) -> None:
