@@ -11,6 +11,11 @@ _VIOLATION_UPDATABLE_FIELDS = {"user_name", "text_preview", "note"}
 _USER_PROFILE_UPDATABLE_FIELDS = {"nickname", "note", "status", "group_ids"}
 
 
+def _escape_like(keyword: str) -> str:
+    """转义 LIKE 模式中的转义符 ``\\`` 及通配符 ``%`` / ``_``，配合 ``ESCAPE '\\'`` 使用。"""
+    return keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 class StatsManager:
     def __init__(self, data_dir: str) -> None:
         self._db_path = os.path.join(data_dir, "content_audit.db")
@@ -127,6 +132,11 @@ class StatsManager:
             await conn.commit()
         except Exception as e:
             logger.error(f"Failed to record audit: {e}")
+            # 回滚以解除事务 abort 状态，使后续 upsert 能在干净连接上执行
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
 
         try:
             await self.upsert_user_profile(user_id, user_name, group_id)
@@ -145,6 +155,7 @@ class StatsManager:
         mute_duration: int,
     ) -> None:
         conn = await self._get_conn()
+        inserted = False
         try:
             await conn.execute(
                 """INSERT INTO violation_records
@@ -169,12 +180,19 @@ class StatsManager:
                 ),
             )
             await conn.commit()
+            inserted = True
         except Exception as e:
             logger.error(f"Failed to record violation: {e}")
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
 
         try:
             await self.upsert_user_profile(user_id, user_name, group_id)
-            await self.inc_user_violation_count(user_id)
+            # 仅当违规记录实际写入后才递增计数，避免记录失败但计数虚增
+            if inserted:
+                await self.inc_user_violation_count(user_id)
         except Exception as e:
             logger.error(f"upsert/inc user profile failed: {e}")
 
@@ -253,6 +271,8 @@ class StatsManager:
                 "UPDATE user_profiles SET violation_count = ?, updated_at = ? WHERE user_id = ?",
                 (remaining, datetime.now().isoformat(), user_id),
             )
+            # 重算剩余 violation_records 的序号，避免删除后序号过时/重复
+            await self._recalc_violation_records_seq(user_id)
             await conn.commit()
         except Exception as e:
             logger.error(f"Failed to delete violations: {e}")
@@ -443,6 +463,30 @@ class StatsManager:
         except Exception as e:
             logger.error(f"Failed to inc_user_violation_count({user_id}): {e}")
 
+    async def _recalc_violation_records_seq(self, user_id: str) -> None:
+        """重算该用户在各群的 violation_records.violation_count 序号（按 created_at 排序）。
+
+        删除违规记录后，剩余行的序号会过时或与后续新插入行重复（新插入基于 COUNT+1），
+        此方法按 (group_id, created_at) 重新连续编号。不提交，由调用方 commit。
+        """
+        conn = await self._get_conn()
+        try:
+            cursor = await conn.execute(
+                "SELECT id, group_id FROM violation_records WHERE user_id = ? ORDER BY created_at ASC",
+                (user_id,),
+            )
+            rows = await cursor.fetchall()
+            counters: dict[str, int] = {}
+            for row in rows:
+                gid = row["group_id"]
+                counters[gid] = counters.get(gid, 0) + 1
+                await conn.execute(
+                    "UPDATE violation_records SET violation_count = ? WHERE id = ?",
+                    (counters[gid], row["id"]),
+                )
+        except Exception as e:
+            logger.error(f"Failed to recalc violation_records seq for {user_id}: {e}")
+
     # ====================================================================
     # v2.0 new: violation records CRUD
     # ====================================================================
@@ -468,8 +512,9 @@ class StatsManager:
             clauses.append("user_id = ?")
             params.append(user_id)
         if keyword:
-            clauses.append("(user_name LIKE ? OR text_preview LIKE ?)")
-            like = f"%{keyword}%"
+            escaped = _escape_like(keyword)
+            clauses.append("(user_name LIKE ? ESCAPE '\\' OR text_preview LIKE ? ESCAPE '\\')")
+            like = f"%{escaped}%"
             params.extend([like, like])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
@@ -557,6 +602,7 @@ class StatsManager:
                 "UPDATE user_profiles SET violation_count = ?, updated_at = ? WHERE user_id = ?",
                 (remaining, datetime.now().isoformat(), user_id),
             )
+            await self._recalc_violation_records_seq(user_id)
             await conn.commit()
             return deleted
         except Exception as e:
@@ -583,19 +629,23 @@ class StatsManager:
             )
             deleted = cursor.rowcount
 
-            # 重新计算所有受影响用户的实际违规计数
+            # 重新计算所有受影响用户的违规计数（一条 UPDATE + 子查询）
             now_iso = datetime.now().isoformat()
-            for uid in affected_users:
-                count_cursor = await conn.execute(
-                    "SELECT COUNT(*) FROM violation_records WHERE user_id = ?",
-                    (uid,),
-                )
-                row = await count_cursor.fetchone()
-                remaining = row[0] if row else 0
+            if affected_users:
+                user_placeholders = ",".join("?" for _ in affected_users)
                 await conn.execute(
-                    "UPDATE user_profiles SET violation_count = ?, updated_at = ? WHERE user_id = ?",
-                    (remaining, now_iso, uid),
+                    f"""UPDATE user_profiles
+                        SET violation_count = (
+                                SELECT COUNT(*) FROM violation_records
+                                WHERE user_id = user_profiles.user_id
+                            ),
+                            updated_at = ?
+                        WHERE user_id IN ({user_placeholders})""",
+                    (now_iso, *affected_users),
                 )
+            # 重算受影响用户的 violation_records 序号
+            for uid in affected_users:
+                await self._recalc_violation_records_seq(uid)
             await conn.commit()
             return deleted
         except Exception as e:
@@ -627,8 +677,9 @@ class StatsManager:
             clauses.append("has_violation = ?")
             params.append(has_violation)
         if keyword:
-            clauses.append("(user_name LIKE ? OR text_preview LIKE ?)")
-            like = f"%{keyword}%"
+            escaped = _escape_like(keyword)
+            clauses.append("(user_name LIKE ? ESCAPE '\\' OR text_preview LIKE ? ESCAPE '\\')")
+            like = f"%{escaped}%"
             params.extend([like, like])
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
@@ -780,8 +831,11 @@ class StatsManager:
         clauses: list[str] = []
         params: list[Any] = []
         if keyword:
-            clauses.append("(user_id LIKE ? OR nickname LIKE ? OR note LIKE ?)")
-            like = f"%{keyword}%"
+            escaped = _escape_like(keyword)
+            clauses.append(
+                "(user_id LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')"
+            )
+            like = f"%{escaped}%"
             params.extend([like, like, like])
         if status:
             clauses.append("status = ?")
@@ -957,21 +1011,31 @@ class StatsManager:
             whitelist_count = await _scalar("SELECT COUNT(*) FROM whitelist")
             user_profiles_count = await _scalar("SELECT COUNT(*) FROM user_profiles")
 
-            # 7-day trend
+            # 7-day trend（2 次 GROUP BY 查询代替 14 次逐天查询）
             today = date.today()
+            start_str = (today - timedelta(days=6)).isoformat()
+            audit_trend_cursor = await conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM audit_log "
+                "WHERE date(created_at) >= date(?) GROUP BY d",
+                (start_str,),
+            )
+            audit_counts = {row["d"]: row["c"] for row in await audit_trend_cursor.fetchall()}
+            viol_trend_cursor = await conn.execute(
+                "SELECT date(created_at) AS d, COUNT(*) AS c FROM violation_records "
+                "WHERE date(created_at) >= date(?) GROUP BY d",
+                (start_str,),
+            )
+            viol_counts = {row["d"]: row["c"] for row in await viol_trend_cursor.fetchall()}
             trend: list[dict] = []
             for i in range(6, -1, -1):
-                d = today - timedelta(days=i)
-                d_str = d.isoformat()
-                a = await _scalar(
-                    "SELECT COUNT(*) FROM audit_log WHERE date(created_at) = date(?)",
-                    (d_str,),
+                d_str = (today - timedelta(days=i)).isoformat()
+                trend.append(
+                    {
+                        "date": d_str,
+                        "audits": audit_counts.get(d_str, 0),
+                        "violations": viol_counts.get(d_str, 0),
+                    }
                 )
-                v = await _scalar(
-                    "SELECT COUNT(*) FROM violation_records WHERE date(created_at) = date(?)",
-                    (d_str,),
-                )
-                trend.append({"date": d_str, "audits": a, "violations": v})
 
             # Top 10 violators
             top_cursor = await conn.execute(

@@ -111,6 +111,11 @@ class MessageHandler:
             # ===== 第7步：校验文本长度 =====
             min_length: int = self._config_manager.get_effective_config(group_id, "min_text_length", 2)
             if not sanitized_message_str or len(sanitized_message_str) < min_length:
+                # 短消息仍缓存为未来上下文（原设计保证），但排除管理员防止未审核消息
+                # 泄漏到审核 API 上下文（bug#7）。白名单短消息（< min_text_length，通常 1 字符）
+                # 泄漏风险极低，且白名单检查在第 10 步、此处尚未执行。
+                if context_enabled and context_k > 0 and message_str and not is_admin:
+                    self._context_cache.add(group_id, user_name, sanitized_message_str, context_k)
                 logger.debug(f"消息文本过短或为空(清洗后): len={len(sanitized_message_str)}, min={min_length}")
                 return
 

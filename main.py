@@ -72,8 +72,15 @@ class ContentAuditPlugin(Star):
             api_cfg = config.get("api", {})
             new_url = api_cfg.get("base_url", "http://127.0.0.1:8000")
             new_key = api_cfg.get("api_key", "")
-            new_timeout = api_cfg.get("timeout", 10)
-            new_retries = api_cfg.get("max_retries", 3)
+
+            def _coerce_int(value, default: int) -> int:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return default
+
+            new_timeout = _coerce_int(api_cfg.get("timeout", 10), 10)
+            new_retries = _coerce_int(api_cfg.get("max_retries", 3), 3)
             if self._audit_client is not None:
                 self._audit_client.update_base_url(new_url)
                 self._audit_client.update_api_key(new_key)
@@ -165,13 +172,15 @@ class ContentAuditPlugin(Star):
                 await asyncio.sleep(interval)
                 try:
                     if self._config_manager is not None:
+                        # 配置变更时 maybe_reload 会触发 _on_config_reload 更新 audit_client 全部参数
                         self._config_manager.maybe_reload()
-                        api_config = self._config_manager.config.get("api", {})
-                    else:
+                    elif self._audit_client is not None:
+                        # config_manager 不可用时的兜底：直接从 _plugin_config 读 base_url
                         api_config = self._plugin_config.get("api", {})
-                    base_url = api_config.get("base_url", "http://127.0.0.1:8000")
+                        self._audit_client.update_base_url(
+                            api_config.get("base_url", "http://127.0.0.1:8000")
+                        )
                     if self._audit_client is not None:
-                        self._audit_client.update_base_url(base_url)
                         result = await self._audit_client.health_check()
                         # 记录健康状态汇总（使 health_status 具有消费者）
                         hs = self._audit_client.health_status

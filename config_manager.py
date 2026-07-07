@@ -166,7 +166,9 @@ class ConfigManager:
             return (False, "未配置")
 
         # 第一层：未启用智能审查 → 全量审查
-        if not config.get("enable_auto_censor", False):
+        # 走 get_effective_config 以应用 _coerce_type，避免字符串配置导致语义反转
+        enable_auto_censor = self.get_effective_config(group_id, "enable_auto_censor", False)
+        if not enable_auto_censor:
             return (True, "全量审查模式")
 
         # 第二层：当前时间在强制审查时间段内
@@ -175,7 +177,7 @@ class ConfigManager:
             return (True, "智能审查-强制时间段")
 
         # 第三层：管理员在线检测
-        no_admin_minutes = config.get("auto_censor_no_admin_minutes", 0) or 0
+        no_admin_minutes = self.get_effective_config(group_id, "auto_censor_no_admin_minutes", 0)
         if no_admin_minutes == 0:
             return (True, "智能审查-非强制时间段")
 
@@ -210,8 +212,11 @@ class ConfigManager:
         tracked_sections = ["api", "audit", "action", "notify", "whitelist", "group_settings"]
         for section in tracked_sections:
             if new_config.get(section) != self._config_snapshot.get(section):
+                # 先建立新快照，成功后再替换 config，避免 _safe_copy_config 异常时
+                # self.config 已指向新配置而 _config_snapshot 仍为旧值的不一致状态
+                new_snapshot = self._safe_copy_config(new_config)
                 self.config = new_config
-                self._config_snapshot = self._safe_copy_config(new_config)
+                self._config_snapshot = new_snapshot
                 self._group_configs.clear()
                 self._parse_group_settings()
                 self._config_version += 1
@@ -244,23 +249,28 @@ class ConfigManager:
         "auto_censor_no_admin_minutes": int,
     }
 
-    def _coerce_type(self, key: str, value: object) -> object:
+    def _coerce_type(self, key: str, value: object, default: object = None) -> object:
         """将配置值强制转换为期望类型，失败时使用默认值"""
         expected = self._TYPE_MAP.get(key)
         if expected is None or value is None:
-            return value
-        if isinstance(value, expected):
             return value
         if expected is bool:
             # bool 是 int 的子类，需优先处理
             if isinstance(value, str):
                 return value.lower() not in ("0", "false", "no", "")
             return bool(value)
+        if isinstance(value, expected):
+            # bool 是 int 子类：对 int 期望需把 bool 转为真正的 int，避免类型不纯
+            if expected is int and isinstance(value, bool):
+                return int(value)
+            return value
         try:
             return expected(value)
         except (ValueError, TypeError):
             logger.warning(f"配置项 {key} 类型错误: {value!r} (期望 {expected.__name__})，使用默认值")
-            return self._DEFAULTS.get(key, value)
+            if key in self._DEFAULTS:
+                return self._DEFAULTS[key]
+            return default
 
     def get_effective_config(self, group_id: str, key: str, default=None):
         """从群设置中读取配置值。
@@ -282,5 +292,5 @@ class ConfigManager:
         if raw is None and key in self._DEFAULTS:
             raw = self._DEFAULTS[key]
         if raw is not None:
-            return self._coerce_type(key, raw)
+            return self._coerce_type(key, raw, default)
         return default
