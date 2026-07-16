@@ -153,10 +153,10 @@ tbody tr:hover { background: var(--surface-2); }
   var bridge = null;
   var state = {
     tab: "overview",
-    violations: { page: 1, page_size: 20, group_id: "", user_id: "", keyword: "", items: [], total: 0, selected: {} },
-    audits: { page: 1, page_size: 20, group_id: "", has_violation: "", keyword: "", items: [], total: 0, selected: {} },
-    whitelist: { items: [] },
-    users: { page: 1, page_size: 20, keyword: "", status: "", items: [], total: 0 }
+    violations: { page: 1, page_size: 20, group_id: "", user_id: "", keyword: "", items: [], total: 0, selected: {}, date_from: "", date_to: "", sort_by: "", sort_dir: "" },
+    audits: { page: 1, page_size: 20, group_id: "", has_violation: "", keyword: "", items: [], total: 0, selected: {}, date_from: "", date_to: "", sort_by: "", sort_dir: "" },
+    whitelist: { items: [], group_id_filter: "", sort_by: "", sort_dir: "" },
+    users: { page: 1, page_size: 20, keyword: "", status: "", items: [], total: 0, first_seen_from: "", first_seen_to: "", last_seen_from: "", last_seen_to: "", groups: [], sort_by: "", sort_dir: "" }
   };
 
   function $(sel, root) { return (root || document).querySelector(sel); }
@@ -358,6 +358,51 @@ tbody tr:hover { background: var(--surface-2); }
     return row;
   }
 
+  var groupsCache = null;
+  async function fetchGroups() {
+    if (groupsCache) return groupsCache;
+    try {
+      var data = await apiGet("groups");
+      groupsCache = Array.isArray(data) ? data : (data && data.items) || [];
+      return groupsCache;
+    } catch (e) {
+      groupsCache = [];
+      return groupsCache;
+    }
+  }
+
+  function makeSortTh(label, sortKey, stateObj, listKey, onSortChange) {
+    var th = el("th");
+    if (!sortKey) { th.appendChild(document.createTextNode(label || "")); return th; }
+    th.style.cursor = "pointer"; th.style.userSelect = "none"; th.setAttribute("title", "点击排序");
+    th.appendChild(document.createTextNode(label));
+    if (stateObj.sort_by === sortKey) th.appendChild(document.createTextNode(stateObj.sort_dir === "asc" ? " ▲" : " ▼"));
+    th.addEventListener("click", function(){
+      if (stateObj.sort_by === sortKey) stateObj.sort_dir = stateObj.sort_dir === "asc" ? "desc" : "asc";
+      else { stateObj.sort_by = sortKey; stateObj.sort_dir = "desc"; }
+      if ("page" in stateObj) stateObj.page = 1;
+      try { localStorage.setItem("content_audit_sort_" + listKey, JSON.stringify({sort_by: stateObj.sort_by, sort_dir: stateObj.sort_dir})); } catch(e){}
+      onSortChange();
+    });
+    return th;
+  }
+  function loadSort(listKey, stateObj) {
+    try { var raw = localStorage.getItem("content_audit_sort_" + listKey); if (raw) { var o = JSON.parse(raw); stateObj.sort_by = o.sort_by || ""; stateObj.sort_dir = o.sort_dir || ""; } } catch(e){}
+  }
+
+  function makeDateInput(name, value) { var i = el("input", { type: "date", name: name }); i.value = value || ""; i.style.width = "135px"; return i; }
+  function makeGroupSelect(currentVal, includeGlobal) {
+    var sel = el("select", { name: "group_id" });
+    sel.appendChild(el("option", { value: "", text: "全部" }));
+    if (includeGlobal) sel.appendChild(el("option", { value: "global", text: "全局" }));
+    (groupsCache || []).forEach(function(g){
+      var label = (g.group_name || g.group_id) + " (" + g.group_id + ")";
+      sel.appendChild(el("option", { value: g.group_id, text: label }));
+    });
+    sel.value = currentVal || "";
+    return sel;
+  }
+
   async function renderOverview() {
     var content = $("#content");
     try {
@@ -450,17 +495,26 @@ tbody tr:hover { background: var(--surface-2); }
   async function renderViolations() {
     var content = $("#content");
     var s = state.violations;
+    await fetchGroups();
     var filter = el("div", { class: "filter-bar" });
-    var inGid = makeInput("group_id", s.group_id, "群号");
+    var selGid = makeGroupSelect(s.group_id, false);
     var inUid = makeInput("user_id", s.user_id, "用户ID");
     var inKw = makeInput("keyword", s.keyword, "关键字");
-    filter.appendChild(inGid);
+    var inDf = makeDateInput("date_from", s.date_from);
+    var inDt = makeDateInput("date_to", s.date_to);
+    filter.appendChild(selGid);
     filter.appendChild(inUid);
     filter.appendChild(inKw);
+    filter.appendChild(document.createTextNode(" 起"));
+    filter.appendChild(inDf);
+    filter.appendChild(document.createTextNode(" 止"));
+    filter.appendChild(inDt);
     filter.appendChild(makeButton("搜索", "btn-primary", function(){
-      s.group_id = inGid.value.trim();
+      s.group_id = selGid.value;
       s.user_id = inUid.value.trim();
       s.keyword = inKw.value.trim();
+      s.date_from = inDf.value;
+      s.date_to = inDt.value;
       s.page = 1;
       renderViolations();
     }));
@@ -491,7 +545,9 @@ tbody tr:hover { background: var(--surface-2); }
     try {
       var data = await apiGet("violations", {
         page: s.page, page_size: s.page_size,
-        group_id: s.group_id, user_id: s.user_id, keyword: s.keyword
+        group_id: s.group_id, user_id: s.user_id, keyword: s.keyword,
+        date_from: s.date_from || undefined, date_to: s.date_to || undefined,
+        sort_by: s.sort_by || undefined, sort_dir: s.sort_dir || undefined
       });
       s.items = data.items || [];
       s.total = data.total || 0;
@@ -501,9 +557,16 @@ tbody tr:hover { background: var(--surface-2); }
       var tbl = el("table");
       var thead = el("thead");
       var trh = el("tr");
-      ["", "ID", "时间", "群", "用户", "内容预览", "措施", "备注", "操作"].forEach(function(h){
-        trh.appendChild(el("th", { text: h }));
-      });
+      var onSort = function(){ renderViolations(); };
+      trh.appendChild(makeSortTh("", null, s, "violations", onSort));
+      trh.appendChild(makeSortTh("ID", "id", s, "violations", onSort));
+      trh.appendChild(makeSortTh("时间", "created_at", s, "violations", onSort));
+      trh.appendChild(makeSortTh("群", "group_id", s, "violations", onSort));
+      trh.appendChild(makeSortTh("用户", "user_id", s, "violations", onSort));
+      trh.appendChild(makeSortTh("内容预览", null, s, "violations", onSort));
+      trh.appendChild(makeSortTh("措施", null, s, "violations", onSort));
+      trh.appendChild(makeSortTh("备注", null, s, "violations", onSort));
+      trh.appendChild(makeSortTh("操作", null, s, "violations", onSort));
       thead.appendChild(trh);
       tbl.appendChild(thead);
       var tbody = el("tbody");
@@ -596,9 +659,10 @@ tbody tr:hover { background: var(--surface-2); }
   async function renderAudits() {
     var content = $("#content");
     var s = state.audits;
+    await fetchGroups();
     var filter = el("div", { class: "filter-bar" });
-    var inGid = makeInput("group_id", s.group_id, "群号");
-    filter.appendChild(inGid);
+    var selGid = makeGroupSelect(s.group_id, false);
+    filter.appendChild(selGid);
     var sel = el("select", { name: "has_violation" });
     [["", "全部"], ["1", "违规"], ["0", "正常"]].forEach(function(opt){
       var o = el("option", { value: opt[0], text: opt[1] });
@@ -608,10 +672,18 @@ tbody tr:hover { background: var(--surface-2); }
     filter.appendChild(sel);
     var inKw = makeInput("keyword", s.keyword, "关键字");
     filter.appendChild(inKw);
+    var inDf = makeDateInput("date_from", s.date_from);
+    var inDt = makeDateInput("date_to", s.date_to);
+    filter.appendChild(document.createTextNode(" 起"));
+    filter.appendChild(inDf);
+    filter.appendChild(document.createTextNode(" 止"));
+    filter.appendChild(inDt);
     filter.appendChild(makeButton("搜索", "btn-primary", function(){
-      s.group_id = inGid.value.trim();
+      s.group_id = selGid.value;
       s.has_violation = sel.value;
       s.keyword = inKw.value.trim();
+      s.date_from = inDf.value;
+      s.date_to = inDt.value;
       s.page = 1;
       renderAudits();
     }));
@@ -642,7 +714,9 @@ tbody tr:hover { background: var(--surface-2); }
     try {
       var data = await apiGet("audits", {
         page: s.page, page_size: s.page_size,
-        group_id: s.group_id, has_violation: s.has_violation, keyword: s.keyword
+        group_id: s.group_id, has_violation: s.has_violation, keyword: s.keyword,
+        date_from: s.date_from || undefined, date_to: s.date_to || undefined,
+        sort_by: s.sort_by || undefined, sort_dir: s.sort_dir || undefined
       });
       s.items = data.items || [];
       s.total = data.total || 0;
@@ -652,9 +726,16 @@ tbody tr:hover { background: var(--surface-2); }
       var tbl = el("table");
       var thead = el("thead");
       var trh = el("tr");
-      ["", "ID", "时间", "群", "用户", "内容预览", "违规", "来源", "操作"].forEach(function(h){
-        trh.appendChild(el("th", { text: h }));
-      });
+      var onSort = function(){ renderAudits(); };
+      trh.appendChild(makeSortTh("", null, s, "audits", onSort));
+      trh.appendChild(makeSortTh("ID", "id", s, "audits", onSort));
+      trh.appendChild(makeSortTh("时间", "created_at", s, "audits", onSort));
+      trh.appendChild(makeSortTh("群", "group_id", s, "audits", onSort));
+      trh.appendChild(makeSortTh("用户", "user_id", s, "audits", onSort));
+      trh.appendChild(makeSortTh("内容预览", null, s, "audits", onSort));
+      trh.appendChild(makeSortTh("违规", "has_violation", s, "audits", onSort));
+      trh.appendChild(makeSortTh("来源", "source", s, "audits", onSort));
+      trh.appendChild(makeSortTh("操作", null, s, "audits", onSort));
       thead.appendChild(trh);
       tbl.appendChild(thead);
       var tbody = el("tbody");
@@ -749,6 +830,16 @@ tbody tr:hover { background: var(--surface-2); }
 
   async function renderWhitelist() {
     var content = $("#content");
+    var s = state.whitelist;
+    await fetchGroups();
+    var filter = el("div", { class: "filter-bar" });
+    var selGid = makeGroupSelect(s.group_id_filter, true);
+    filter.appendChild(selGid);
+    filter.appendChild(makeButton("搜索", "btn-primary", function(){
+      s.group_id_filter = selGid.value;
+      renderWhitelist();
+    }));
+
     var toolbar = el("div", { class: "toolbar" });
     var btnAdd = el("button", { class: "btn btn-primary", text: "+ 新增" });
     btnAdd.addEventListener("click", openCreateWhitelist);
@@ -757,12 +848,17 @@ tbody tr:hover { background: var(--surface-2); }
     toolbar.appendChild(info);
 
     content.innerHTML = "";
+    content.appendChild(filter);
     content.appendChild(toolbar);
     var loading = el("div", { class: "loading-overlay", html: '<span class="spinner"></span> 加载中...' });
     content.appendChild(loading);
 
     try {
-      var data = await apiGet("whitelist");
+      var data = await apiGet("whitelist", {
+        group_id: s.group_id_filter === "" ? "all" : s.group_id_filter,
+        sort_by: s.sort_by || undefined,
+        sort_dir: s.sort_dir || undefined
+      });
       state.whitelist.items = (data && data.items) || [];
       info.textContent = "共 " + state.whitelist.items.length + " 项";
       content.removeChild(loading);
@@ -771,16 +867,20 @@ tbody tr:hover { background: var(--surface-2); }
       var tbl = el("table");
       var thead = el("thead");
       var trh = el("tr");
-      ["ID", "QQ号", "备注", "添加时间", "操作"].forEach(function(h){
-        trh.appendChild(el("th", { text: h }));
-      });
+      var onSort = function(){ renderWhitelist(); };
+      trh.appendChild(makeSortTh("ID", "id", s, "whitelist", onSort));
+      trh.appendChild(makeSortTh("QQ号", "user_id", s, "whitelist", onSort));
+      trh.appendChild(makeSortTh("备注", null, s, "whitelist", onSort));
+      trh.appendChild(makeSortTh("添加时间", "created_at", s, "whitelist", onSort));
+      trh.appendChild(makeSortTh("群", "group_id", s, "whitelist", onSort));
+      trh.appendChild(makeSortTh("操作", null, s, "whitelist", onSort));
       thead.appendChild(trh);
       tbl.appendChild(thead);
       var tbody = el("tbody");
       if (state.whitelist.items.length === 0) {
         var trE = el("tr");
         var tdE = el("td", { text: "暂无数据" });
-        tdE.setAttribute("colspan", 5);
+        tdE.setAttribute("colspan", 6);
         tdE.style.textAlign = "center";
         tdE.style.color = "var(--text-2)";
         trE.appendChild(tdE);
@@ -792,6 +892,7 @@ tbody tr:hover { background: var(--surface-2); }
           var tdU = el("td", { text: row.user_id || "" }); tdU.setAttribute("data-label", "QQ号"); tr.appendChild(tdU);
           var tdN = el("td", { text: row.note || "-" }); tdN.setAttribute("data-label", "备注"); tr.appendChild(tdN);
           var tdT = el("td", { text: fmtTime(row.created_at) }); tdT.setAttribute("data-label", "添加时间"); tr.appendChild(tdT);
+          var tdG = el("td", { text: row.group_id ? row.group_id : "全局" }); tdG.setAttribute("data-label", "群"); tr.appendChild(tdG);
           var tdOps = el("td"); tdOps.setAttribute("data-label", "操作");
           var btnEdit = el("button", { class: "btn btn-sm", text: "改备注" });
           btnEdit.addEventListener("click", function(){ openEditWhitelist(row); });
@@ -824,6 +925,17 @@ tbody tr:hover { background: var(--surface-2); }
   function openCreateWhitelist() {
     var form = el("div");
     form.appendChild(makeFormRow("QQ号", "user_id", ""));
+    // 群选择：全局（空=全局） + 各群
+    var groupRow = el("div", { class: "form-row" });
+    groupRow.appendChild(el("label", { text: "群（空=全局）" }));
+    var gSel = el("select", { name: "group_id" });
+    gSel.appendChild(el("option", { value: "", text: "全局" }));
+    (groupsCache || []).forEach(function(g){
+      var label = (g.group_name || g.group_id) + " (" + g.group_id + ")";
+      gSel.appendChild(el("option", { value: g.group_id, text: label }));
+    });
+    groupRow.appendChild(gSel);
+    form.appendChild(groupRow);
     form.appendChild(makeFormRow("备注", "note", "", true));
     showModal({
       title: "添加白名单",
@@ -834,8 +946,9 @@ tbody tr:hover { background: var(--surface-2); }
           var uid = form.querySelector('[name="user_id"]').value.trim();
           if (!uid) { toast("请输入 QQ 号", "error"); return; }
           var note = form.querySelector('[name="note"]').value;
+          var group_id = form.querySelector('[name="group_id"]').value;
           try {
-            await apiPost("whitelist", { user_id: uid, note: note });
+            await apiPost("whitelist", { user_id: uid, note: note, group_id: group_id });
             toast("已添加", "success");
             closeModal();
             renderWhitelist();
@@ -868,6 +981,7 @@ tbody tr:hover { background: var(--surface-2); }
   async function renderUsers() {
     var content = $("#content");
     var s = state.users;
+    await fetchGroups();
     var filter = el("div", { class: "filter-bar" });
     var sel = el("select", { name: "status" });
     [["", "全部状态"], ["normal", "normal"], ["watched", "watched"], ["blacklist", "blacklist"], ["whitelist", "whitelist"]].forEach(function(opt){
@@ -878,9 +992,34 @@ tbody tr:hover { background: var(--surface-2); }
     filter.appendChild(sel);
     var inKw = makeInput("keyword", s.keyword, "关键字（QQ/昵称）");
     filter.appendChild(inKw);
+    var inFf = makeDateInput("first_seen_from", s.first_seen_from);
+    var inFt = makeDateInput("first_seen_to", s.first_seen_to);
+    filter.appendChild(document.createTextNode(" 首现起"));
+    filter.appendChild(inFf);
+    filter.appendChild(document.createTextNode(" 止"));
+    filter.appendChild(inFt);
+    var inLf = makeDateInput("last_seen_from", s.last_seen_from);
+    var inLt = makeDateInput("last_seen_to", s.last_seen_to);
+    filter.appendChild(document.createTextNode(" 末现起"));
+    filter.appendChild(inLf);
+    filter.appendChild(document.createTextNode(" 止"));
+    filter.appendChild(inLt);
+    var grpSel = el("select", { multiple: "multiple", name: "groups", size: "3", style: "width:160px;" });
+    (groupsCache || []).forEach(function(g){
+      var o = el("option", { value: g.group_id, text: (g.group_name || g.group_id) + " (" + g.group_id + ")" });
+      if (s.groups.indexOf(g.group_id) !== -1) o.selected = true;
+      grpSel.appendChild(o);
+    });
+    filter.appendChild(el("label", { text: " 群多选", style: "font-size:12px;color:var(--text-2);" }));
+    filter.appendChild(grpSel);
     filter.appendChild(makeButton("搜索", "btn-primary", function(){
       s.status = sel.value;
       s.keyword = inKw.value.trim();
+      s.first_seen_from = inFf.value;
+      s.first_seen_to = inFt.value;
+      s.last_seen_from = inLf.value;
+      s.last_seen_to = inLt.value;
+      s.groups = Array.prototype.slice.call(grpSel.selectedOptions).map(function(o){ return o.value; });
       s.page = 1;
       renderUsers();
     }));
@@ -898,7 +1037,13 @@ tbody tr:hover { background: var(--surface-2); }
     content.appendChild(loading);
 
     try {
-      var data = await apiGet("users", { page: s.page, page_size: s.page_size, keyword: s.keyword, status: s.status });
+      var data = await apiGet("users", {
+        page: s.page, page_size: s.page_size, keyword: s.keyword, status: s.status,
+        first_seen_from: s.first_seen_from || undefined, first_seen_to: s.first_seen_to || undefined,
+        last_seen_from: s.last_seen_from || undefined, last_seen_to: s.last_seen_to || undefined,
+        groups: s.groups.length ? s.groups.join(",") : undefined,
+        sort_by: s.sort_by || undefined, sort_dir: s.sort_dir || undefined
+      });
       s.items = data.items || [];
       s.total = data.total || 0;
       content.removeChild(loading);
@@ -907,16 +1052,24 @@ tbody tr:hover { background: var(--surface-2); }
       var tbl = el("table");
       var thead = el("thead");
       var trh = el("tr");
-      ["QQ号", "昵称", "状态", "违规次数", "群", "首次出现", "最后出现", "备注", "操作"].forEach(function(h){
-        trh.appendChild(el("th", { text: h }));
-      });
+      var onSort = function(){ renderUsers(); };
+      trh.appendChild(makeSortTh("QQ号", "user_id", s, "users", onSort));
+      trh.appendChild(makeSortTh("昵称", "nickname", s, "users", onSort));
+      trh.appendChild(makeSortTh("状态", "status", s, "users", onSort));
+      trh.appendChild(makeSortTh("违规次数", "violation_count", s, "users", onSort));
+      trh.appendChild(makeSortTh("加群数", "group_count", s, "users", onSort));
+      trh.appendChild(makeSortTh("群", null, s, "users", onSort));
+      trh.appendChild(makeSortTh("首次出现", "first_seen_at", s, "users", onSort));
+      trh.appendChild(makeSortTh("最后出现", "last_seen_at", s, "users", onSort));
+      trh.appendChild(makeSortTh("备注", null, s, "users", onSort));
+      trh.appendChild(makeSortTh("操作", null, s, "users", onSort));
       thead.appendChild(trh);
       tbl.appendChild(thead);
       var tbody = el("tbody");
       if (s.items.length === 0) {
         var trE = el("tr");
         var tdE = el("td", { text: "暂无数据" });
-        tdE.setAttribute("colspan", 9);
+        tdE.setAttribute("colspan", 10);
         tdE.style.textAlign = "center";
         tdE.style.color = "var(--text-2)";
         trE.appendChild(tdE);
@@ -938,6 +1091,7 @@ tbody tr:hover { background: var(--surface-2); }
             try { groups = JSON.parse(groups); } catch(e) { groups = []; }
           }
           if (!Array.isArray(groups)) groups = [];
+          var tdGc = el("td", { text: String(groups.length) }); tdGc.setAttribute("data-label", "加群数"); tr.appendChild(tdGc);
           var tdG = el("td"); tdG.setAttribute("data-label", "群");
           if (groups.length === 0) tdG.appendChild(document.createTextNode("-"));
           else groups.forEach(function(gid){ tdG.appendChild(el("span", { class: "chip", text: gid })); });
@@ -1064,6 +1218,10 @@ tbody tr:hover { background: var(--surface-2); }
       return;
     }
     try { await bridge.ready(); } catch (e) { /* ignore */ }
+    loadSort("violations", state.violations);
+    loadSort("audits", state.audits);
+    loadSort("whitelist", state.whitelist);
+    loadSort("users", state.users);
     bindTabs();
     render();
   }

@@ -10,6 +10,51 @@ from astrbot.api import logger
 _VIOLATION_UPDATABLE_FIELDS = {"user_name", "text_preview", "note"}
 _USER_PROFILE_UPDATABLE_FIELDS = {"nickname", "note", "status", "group_ids"}
 
+# sort field allowlists - SQL injection safe
+_VIOLATION_SORT_FIELDS: dict[str, str] = {
+    "id": "id",
+    "created_at": "created_at",
+    "group_id": "group_id",
+    "user_id": "user_id",
+}
+_AUDIT_SORT_FIELDS: dict[str, str] = {
+    "id": "id",
+    "created_at": "created_at",
+    "group_id": "group_id",
+    "user_id": "user_id",
+    "has_violation": "has_violation",
+    "source": "source",
+}
+_WHITELIST_SORT_FIELDS: dict[str, str] = {
+    "id": "id",
+    "user_id": "user_id",
+    "created_at": "created_at",
+    "group_id": "group_id",
+}
+_USER_PROFILE_SORT_FIELDS: dict[str, str] = {
+    "user_id": "user_id",
+    "nickname": "nickname",
+    "status": "status",
+    "violation_count": "violation_count",
+    "group_count": "json_array_length(group_ids)",
+    "first_seen_at": "first_seen_at",
+    "last_seen_at": "last_seen_at",
+}
+
+
+def _build_order_clause(sort_by, sort_dir, allowlist, default_clause, tiebreaker):
+    """构造安全的 ORDER BY 子句。sort_by 必须在 allowlist 中，否则用 default_clause。
+
+    无论显式排序还是默认排序，均追加固定次级键（tiebreaker ASC）保证分页稳定。
+    """
+    direction = "ASC" if (sort_dir or "").lower() == "asc" else "DESC"
+    col = allowlist.get(sort_by or "")
+    if col is None:
+        return f"{default_clause}, {tiebreaker} ASC"
+    if col == tiebreaker:
+        return f"ORDER BY {col} {direction}"
+    return f"ORDER BY {col} {direction}, {tiebreaker} ASC"
+
 
 def _escape_like(keyword: str) -> str:
     """转义 LIKE 模式中的转义符 ``\\`` 及通配符 ``%`` / ``_``，配合 ``ESCAPE '\\'`` 使用。"""
@@ -73,8 +118,11 @@ class StatsManager:
 
                 CREATE TABLE IF NOT EXISTS whitelist (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT UNIQUE,
-                    created_at TEXT
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    note TEXT DEFAULT '',
+                    created_at TEXT,
+                    UNIQUE(user_id, group_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS user_profiles (
@@ -100,6 +148,36 @@ class StatsManager:
         # idempotent migration: v1 legacy whitelist/violation_records add note column
         await self._ensure_column("whitelist", "note", "TEXT DEFAULT ''")
         await self._ensure_column("violation_records", "note", "TEXT DEFAULT ''")
+
+        # v2.2 migration: whitelist per-group (UNIQUE(user_id, group_id))
+        await self._migrate_whitelist_per_group()
+
+    async def _migrate_whitelist_per_group(self) -> None:
+        """旧 whitelist（user_id UNIQUE，无 group_id）-> 重建为 UNIQUE(user_id, group_id)。幂等。"""
+        conn = await self._get_conn()
+        try:
+            cursor = await conn.execute("PRAGMA table_info(whitelist)")
+            cols = {row["name"] for row in await cursor.fetchall()}
+            if "group_id" in cols:
+                return
+            await conn.executescript("""
+                CREATE TABLE whitelist_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    note TEXT DEFAULT '',
+                    created_at TEXT,
+                    UNIQUE(user_id, group_id)
+                );
+                INSERT INTO whitelist_new(user_id, group_id, note, created_at)
+                    SELECT user_id, '', COALESCE(note, ''), created_at FROM whitelist;
+                DROP TABLE whitelist;
+                ALTER TABLE whitelist_new RENAME TO whitelist;
+            """)
+            await conn.commit()
+            logger.info("[stats_manager] migrated: whitelist -> per-group (group_id + UNIQUE(user_id, group_id))")
+        except Exception as e:
+            logger.error(f"_migrate_whitelist_per_group failed: {e}")
 
     async def record_audit(
         self,
@@ -353,24 +431,14 @@ class StatsManager:
             }
 
     async def add_whitelist(self, user_id: str) -> bool:
-        conn = await self._get_conn()
-        try:
-            await conn.execute(
-                "INSERT INTO whitelist (user_id, created_at) VALUES (?, ?)",
-                (user_id, datetime.now().isoformat()),
-            )
-            await conn.commit()
-            return True
-        except aiosqlite.IntegrityError:
-            return False
-        except Exception as e:
-            logger.error(f"Failed to add whitelist: {e}")
-            return False
+        """Add to global whitelist (group_id=''). Delegates to add_whitelist_with_note."""
+        result = await self.add_whitelist_with_note(user_id, "", "")
+        return result is not None
 
-    async def remove_whitelist(self, user_id: str) -> bool:
+    async def remove_whitelist(self, user_id: str, group_id: str = "") -> bool:
         conn = await self._get_conn()
         try:
-            cursor = await conn.execute("DELETE FROM whitelist WHERE user_id = ?", (user_id,))
+            cursor = await conn.execute("DELETE FROM whitelist WHERE user_id = ? AND group_id = ?", (user_id, group_id))
             await conn.commit()
             return cursor.rowcount > 0
         except Exception as e:
@@ -378,13 +446,42 @@ class StatsManager:
             return False
 
     async def get_whitelist(self) -> list[str] | None:
+        """Return global (group_id='') whitelist user_ids. Backward-compatible."""
         conn = await self._get_conn()
         try:
-            cursor = await conn.execute("SELECT user_id FROM whitelist")
+            cursor = await conn.execute("SELECT user_id FROM whitelist WHERE group_id = ''")
             rows = await cursor.fetchall()
             return [row["user_id"] for row in rows]
         except Exception as e:
             logger.error(f"Failed to get whitelist: {e}")
+            return None
+
+    async def is_whitelisted(self, user_id: str, group_id: str = "") -> bool:
+        """Check if user is whitelisted in global scope or the given group."""
+        conn = await self._get_conn()
+        try:
+            cursor = await conn.execute(
+                "SELECT 1 FROM whitelist WHERE user_id=? AND (group_id='' OR group_id=?) LIMIT 1",
+                (user_id, group_id),
+            )
+            row = await cursor.fetchone()
+            return row is not None
+        except Exception as e:
+            logger.error(f"Failed to check is_whitelisted({user_id}): {e}")
+            return False
+
+    async def get_whitelist_by_group(self, group_id: str = "") -> list[str] | None:
+        """Return user_id list for a specific group (default global). None on DB error."""
+        conn = await self._get_conn()
+        try:
+            cursor = await conn.execute(
+                "SELECT user_id FROM whitelist WHERE group_id=? ORDER BY created_at DESC",
+                (group_id,),
+            )
+            rows = await cursor.fetchall()
+            return [row["user_id"] for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get_whitelist_by_group({group_id}): {e}")
             return None
 
     async def cleanup_audit_log(self, keep_days: int = 30) -> int:
@@ -498,6 +595,10 @@ class StatsManager:
         group_id: str | None = None,
         user_id: str | None = None,
         keyword: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> tuple[list[dict], int]:
         """Paginated violation query; keyword LIKE-matches user_name or text_preview."""
         conn = await self._get_conn()
@@ -516,7 +617,14 @@ class StatsManager:
             clauses.append("(user_name LIKE ? ESCAPE '\\' OR text_preview LIKE ? ESCAPE '\\')")
             like = f"%{escaped}%"
             params.extend([like, like])
+        if date_from:
+            clauses.append("date(created_at) >= date(?)")
+            params.append(date_from)
+        if date_to:
+            clauses.append("date(created_at) <= date(?)")
+            params.append(date_to)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_clause = _build_order_clause(sort_by, sort_dir, _VIOLATION_SORT_FIELDS, "ORDER BY created_at DESC", "id")
         try:
             count_cursor = await conn.execute(
                 f"SELECT COUNT(*) FROM violation_records {where}",
@@ -526,9 +634,7 @@ class StatsManager:
             total = total_row[0] if total_row else 0
 
             data_cursor = await conn.execute(
-                f"""SELECT * FROM violation_records {where}
-                    ORDER BY created_at DESC
-                    LIMIT ? OFFSET ?""",
+                f"SELECT * FROM violation_records {where} {order_clause} LIMIT ? OFFSET ?",
                 [*params, page_size, (page - 1) * page_size],
             )
             rows = [dict(r) for r in await data_cursor.fetchall()]
@@ -663,6 +769,10 @@ class StatsManager:
         group_id: str | None = None,
         has_violation: int | None = None,
         keyword: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> tuple[list[dict], int]:
         """Paginated audit_log query."""
         conn = await self._get_conn()
@@ -681,7 +791,14 @@ class StatsManager:
             clauses.append("(user_name LIKE ? ESCAPE '\\' OR text_preview LIKE ? ESCAPE '\\')")
             like = f"%{escaped}%"
             params.extend([like, like])
+        if date_from:
+            clauses.append("date(created_at) >= date(?)")
+            params.append(date_from)
+        if date_to:
+            clauses.append("date(created_at) <= date(?)")
+            params.append(date_to)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_clause = _build_order_clause(sort_by, sort_dir, _AUDIT_SORT_FIELDS, "ORDER BY created_at DESC", "id")
         try:
             count_cursor = await conn.execute(
                 f"SELECT COUNT(*) FROM audit_log {where}",
@@ -691,9 +808,7 @@ class StatsManager:
             total = total_row[0] if total_row else 0
 
             data_cursor = await conn.execute(
-                f"""SELECT * FROM audit_log {where}
-                    ORDER BY created_at DESC
-                    LIMIT ? OFFSET ?""",
+                f"SELECT * FROM audit_log {where} {order_clause} LIMIT ? OFFSET ?",
                 [*params, page_size, (page - 1) * page_size],
             )
             rows = [dict(r) for r in await data_cursor.fetchall()]
@@ -751,16 +866,31 @@ class StatsManager:
     # v2.0 new: whitelist detailed CRUD (with note + id)
     # ====================================================================
 
-    async def list_whitelist_detailed(self) -> list[dict]:
-        """SELECT id, user_id, note, created_at FROM whitelist ORDER BY created_at DESC."""
+    async def list_whitelist_detailed(
+        self,
+        group_id_filter: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
+    ) -> list[dict]:
+        """SELECT id, user_id, group_id, note, created_at FROM whitelist with optional group_id filter."""
         conn = await self._get_conn()
         try:
+            clauses: list[str] = []
+            params: list[Any] = []
+            if group_id_filter is not None:
+                if group_id_filter == "global":
+                    clauses.append("group_id = ''")
+                else:
+                    clauses.append("group_id = ?")
+                    params.append(group_id_filter)
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            order_clause = _build_order_clause(
+                sort_by, sort_dir, _WHITELIST_SORT_FIELDS, "ORDER BY created_at DESC", "id"
+            )
             cursor = await conn.execute(
-                """SELECT id, user_id,
-                          COALESCE(note, '') AS note,
-                          created_at
-                   FROM whitelist
-                   ORDER BY created_at DESC"""
+                "SELECT id, user_id, group_id, COALESCE(note, '') AS note, created_at"
+                f" FROM whitelist {where} {order_clause}",
+                params,
             )
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
@@ -768,14 +898,14 @@ class StatsManager:
             logger.error(f"Failed to list_whitelist_detailed: {e}")
             return []
 
-    async def add_whitelist_with_note(self, user_id: str, note: str = "") -> int | None:
-        """Returns new id on success; returns None if user_id already exists."""
+    async def add_whitelist_with_note(self, user_id: str, note: str = "", group_id: str = "") -> int | None:
+        """Returns new id on success; returns None if (user_id, group_id) already exists."""
         conn = await self._get_conn()
         try:
             cursor = await conn.execute(
-                """INSERT INTO whitelist (user_id, note, created_at)
-                   VALUES (?, ?, ?)""",
-                (user_id, note, datetime.now().isoformat()),
+                """INSERT INTO whitelist (user_id, note, group_id, created_at)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, note, group_id or "", datetime.now().isoformat()),
             )
             await conn.commit()
             return cursor.lastrowid
@@ -823,6 +953,13 @@ class StatsManager:
         page_size: int = 20,
         keyword: str | None = None,
         status: str | None = None,
+        sort_by: str | None = None,
+        sort_dir: str | None = None,
+        first_seen_from: str | None = None,
+        first_seen_to: str | None = None,
+        last_seen_from: str | None = None,
+        last_seen_to: str | None = None,
+        groups: list[str] | str | None = None,
     ) -> tuple[list[dict], int]:
         """Paginated user_profiles query; keyword LIKE-matches user_id/nickname/note."""
         conn = await self._get_conn()
@@ -832,15 +969,42 @@ class StatsManager:
         params: list[Any] = []
         if keyword:
             escaped = _escape_like(keyword)
-            clauses.append(
-                "(user_id LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')"
-            )
+            clauses.append("(user_id LIKE ? ESCAPE '\\' OR nickname LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')")
             like = f"%{escaped}%"
             params.extend([like, like, like])
         if status:
             clauses.append("status = ?")
             params.append(status)
+        if first_seen_from:
+            clauses.append("date(first_seen_at) >= date(?)")
+            params.append(first_seen_from)
+        if first_seen_to:
+            clauses.append("date(first_seen_at) <= date(?)")
+            params.append(first_seen_to)
+        if last_seen_from:
+            clauses.append("date(last_seen_at) >= date(?)")
+            params.append(last_seen_from)
+        if last_seen_to:
+            clauses.append("date(last_seen_at) <= date(?)")
+            params.append(last_seen_to)
+        if groups:
+            if isinstance(groups, str):
+                groups = [g.strip() for g in groups.split(",") if g.strip()]
+            group_parts: list[str] = []
+            for g in groups:
+                escaped = _escape_like(g)
+                group_parts.append("group_ids LIKE ? ESCAPE '\\'")
+                params.append(f'%"{escaped}"%')
+            if group_parts:
+                clauses.append(f"({' OR '.join(group_parts)})")
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order_clause = _build_order_clause(
+            sort_by,
+            sort_dir,
+            _USER_PROFILE_SORT_FIELDS,
+            "ORDER BY violation_count DESC, last_seen_at DESC",
+            "user_id",
+        )
         try:
             count_cursor = await conn.execute(
                 f"SELECT COUNT(*) FROM user_profiles {where}",
@@ -850,9 +1014,7 @@ class StatsManager:
             total = total_row[0] if total_row else 0
 
             data_cursor = await conn.execute(
-                f"""SELECT * FROM user_profiles {where}
-                    ORDER BY violation_count DESC, last_seen_at DESC
-                    LIMIT ? OFFSET ?""",
+                f"SELECT * FROM user_profiles {where} {order_clause} LIMIT ? OFFSET ?",
                 [*params, page_size, (page - 1) * page_size],
             )
             rows = [dict(r) for r in await data_cursor.fetchall()]

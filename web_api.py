@@ -83,6 +83,7 @@ class WebApiHandler:
     ) -> None:
         self._stats = stats_manager
         self._config = config_manager
+        self._context: Context | None = None
 
     # ------------------------------------------------------------------ #
     # 注册
@@ -90,10 +91,13 @@ class WebApiHandler:
 
     def register(self, context: Context, plugin_name: str = PLUGIN_NAME) -> None:
         """把所有路由挂到 AstrBot Dashboard 上。"""
+        self._context = context
         prefix = f"/{plugin_name}"
         routes: list[tuple[str, Any, list[str], str]] = [
             # 概览
             (f"{prefix}/stats/overview", self.api_stats_overview, ["GET"], "审核概览"),
+            # 群列表
+            (f"{prefix}/groups", self.api_groups_list, ["GET"], "群列表(含群名)"),
             # 违规记录
             (f"{prefix}/violations", self.api_violations_list, ["GET"], "违规列表"),
             (
@@ -157,6 +161,43 @@ class WebApiHandler:
         return body, None
 
     # ------------------------------------------------------------------ #
+    # 群列表
+    # ------------------------------------------------------------------ #
+
+    async def api_groups_list(self) -> Any:
+        """GET /groups 返回 [{group_id, group_name}]，群名按 别名->平台->群号 解析。"""
+        try:
+            configured = self._config.get_group_display_list()  # [{group_id, group_name(alias)}]
+            # 平台群名映射
+            platform_names: dict[str, str] = {}
+            try:
+                if self._context is not None:
+                    from astrbot.api.platform import PlatformAdapterType
+
+                    platform = self._context.get_platform(PlatformAdapterType.AIOCQHTTP)
+                    if platform is not None:
+                        bot = platform.get_client()
+                        if bot is not None:
+                            raw = await bot.call_action(action="get_group_list")
+                            for g in raw or []:
+                                gid = str(g.get("group_id", ""))
+                                gname = g.get("group_name", "") or ""
+                                if gid:
+                                    platform_names[gid] = gname
+            except Exception:
+                logger.debug("[web_api] get_group_list failed, fallback to alias/group_id")
+            result: list[dict] = []
+            for item in configured:
+                gid = item.get("group_id", "")
+                alias = item.get("group_name", "") or ""
+                name = alias or platform_names.get(gid, "") or gid
+                result.append({"group_id": gid, "group_name": name})
+            return _ok(result)
+        except Exception:
+            logger.exception("[web_api] api_groups_list failed")
+            return _fail("internal error", 1, 500)
+
+    # ------------------------------------------------------------------ #
     # 概览
     # ------------------------------------------------------------------ #
 
@@ -174,18 +215,26 @@ class WebApiHandler:
     # ------------------------------------------------------------------ #
 
     async def api_violations_list(self) -> Any:
-        """GET /violations?page=&page_size=&group_id=&user_id=&keyword="""
+        """GET /violations?page=&page_size=&group_id=&user_id=&keyword=&sort_by=&sort_dir=&date_from=&date_to="""
         try:
             page, page_size = _parse_page(request.args)
             group_id = request.args.get("group_id") or None
             user_id = request.args.get("user_id") or None
             keyword = request.args.get("keyword") or None
+            sort_by = request.args.get("sort_by") or None
+            sort_dir = request.args.get("sort_dir") or None
+            date_from = request.args.get("date_from") or None
+            date_to = request.args.get("date_to") or None
             items, total = await self._stats.list_violations(
                 page=page,
                 page_size=page_size,
                 group_id=group_id,
                 user_id=user_id,
                 keyword=keyword,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                date_from=date_from,
+                date_to=date_to,
             )
             return _ok(
                 {
@@ -280,7 +329,7 @@ class WebApiHandler:
     # ------------------------------------------------------------------ #
 
     async def api_audits_list(self) -> Any:
-        """GET /audits?page=&page_size=&group_id=&has_violation=&keyword="""
+        """GET /audits?page=&page_size=&group_id=&has_violation=&keyword=&sort_by=&sort_dir=&date_from=&date_to="""
         try:
             page, page_size = _parse_page(request.args)
             group_id = request.args.get("group_id") or None
@@ -295,12 +344,20 @@ class WebApiHandler:
                 has_violation = 0
             else:
                 has_violation = None
+            sort_by = request.args.get("sort_by") or None
+            sort_dir = request.args.get("sort_dir") or None
+            date_from = request.args.get("date_from") or None
+            date_to = request.args.get("date_to") or None
             items, total = await self._stats.list_audits(
                 page=page,
                 page_size=page_size,
                 group_id=group_id,
                 has_violation=has_violation,
                 keyword=keyword,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                date_from=date_from,
+                date_to=date_to,
             )
             return _ok(
                 {
@@ -372,28 +429,45 @@ class WebApiHandler:
     # ------------------------------------------------------------------ #
 
     async def api_whitelist_list(self) -> Any:
-        """GET /whitelist"""
+        """GET /whitelist?group_id=&sort_by=&sort_dir="""
         try:
-            items = await self._stats.list_whitelist_detailed()
+            group_id = request.args.get("group_id") or None
+            sort_by = request.args.get("sort_by") or None
+            sort_dir = request.args.get("sort_dir") or None
+            # group_id 映射为 group_id_filter
+            group_id_filter: str | None
+            if group_id in (None, "", "all"):
+                group_id_filter = None
+            elif group_id == "global":
+                group_id_filter = "global"
+            else:
+                group_id_filter = group_id
+            items = await self._stats.list_whitelist_detailed(
+                group_id_filter=group_id_filter,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+            )
             return _ok({"items": items, "total": len(items)})
         except Exception:
             logger.exception("[web_api] api_whitelist_list failed")
             return _fail("internal error", 1, 500)
 
     async def api_whitelist_create(self) -> Any:
-        """POST /whitelist  body: {user_id, note?}"""
+        """POST /whitelist  body: {user_id, note?, group_id?}"""
         try:
             body, err = await self._json_body()
             if err is not None:
                 return err
             user_id = str(body.get("user_id") or "").strip()
             note = str(body.get("note") or "")
+            group_id = str(body.get("group_id") or "")
             if not user_id:
                 return _fail("user_id is required", 1, 400)
-            ok = await self._stats.add_whitelist_with_note(user_id, note)
-            if not ok:
+            ok = await self._stats.add_whitelist_with_note(user_id, note, group_id)
+            if ok is None:
                 return _fail("user already in whitelist or insert failed", 1, 409)
-            logger.info(f"[web_api] add_whitelist by {_current_user()}: user_id={user_id}")
+            self._config.invalidate_whitelist_cache()
+            logger.info(f"[web_api] add_whitelist by {_current_user()}: user_id={user_id} group_id={group_id}")
             return _ok(None)
         except Exception:
             logger.exception("[web_api] api_whitelist_create failed")
@@ -429,6 +503,7 @@ class WebApiHandler:
             ok = await self._stats.delete_whitelist_by_id(wid_int)
             if not ok:
                 return _fail("not found", 1, 404)
+            self._config.invalidate_whitelist_cache()
             logger.info(f"[web_api] delete_whitelist by {_current_user()}: id={wid_int}")
             return _ok(None)
         except Exception:
@@ -440,18 +515,35 @@ class WebApiHandler:
     # ------------------------------------------------------------------ #
 
     async def api_users_list(self) -> Any:
-        """GET /users?page=&page_size=&keyword=&status="""
+        """GET /users?page=&page_size=&keyword=&status=&sort_by=&sort_dir=..."""
         try:
             page, page_size = _parse_page(request.args)
             keyword = request.args.get("keyword") or None
             status = request.args.get("status") or None
             if status in ("", "all"):
                 status = None
+            sort_by = request.args.get("sort_by") or None
+            sort_dir = request.args.get("sort_dir") or None
+            first_seen_from = request.args.get("first_seen_from") or None
+            first_seen_to = request.args.get("first_seen_to") or None
+            last_seen_from = request.args.get("last_seen_from") or None
+            last_seen_to = request.args.get("last_seen_to") or None
+            groups_raw = request.args.get("groups") or None
+            groups: list[str] | None = None
+            if groups_raw:
+                groups = [g.strip() for g in groups_raw.split(",") if g.strip()]
             items, total = await self._stats.list_user_profiles(
                 page=page,
                 page_size=page_size,
                 keyword=keyword,
                 status=status,
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                first_seen_from=first_seen_from,
+                first_seen_to=first_seen_to,
+                last_seen_from=last_seen_from,
+                last_seen_to=last_seen_to,
+                groups=groups,
             )
             return _ok(
                 {

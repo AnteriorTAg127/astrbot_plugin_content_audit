@@ -65,34 +65,53 @@ class CommandHandler:
         """返回帮助信息"""
         return (
             "📋 文本审核命令列表\n"
-            "/文本审核 状态 — 查看审核统计\n"
-            "/文本审核 状态 <群号> — 查看指定群的审核统计\n"
-            "/文本审核 日志 — 查看最近10条违规记录\n"
-            "/文本审核 日志 <页码> — 分页查看违规日志\n"
-            "/文本审核 白名单 添加 <QQ号> — 添加白名单用户（管理员）\n"
-            "/文本审核 白名单 删除 <QQ号> — 移除白名单用户（管理员）\n"
-            "/文本审核 白名单 列表 — 列出所有白名单用户\n"
-            "/文本审核 删除违规 <QQ号> — 清除违规记录（管理员）"
+            "/文本审核 状态 [群号|all] — 查看审核统计\n"
+            "/文本审核 日志 [群号|all] [页码] — 分页查看违规日志\n"
+            "/文本审核 白名单 添加 <QQ号> [群号|all] — 添加白名单用户（管理员）\n"
+            "/文本审核 白名单 删除 <QQ号> [群号|all] — 移除白名单用户（管理员）\n"
+            "/文本审核 白名单 列表 [群号|all] — 列出白名单用户\n"
+            "/文本审核 删除违规 <QQ号> [群号|all] 确认 — 清除违规记录（管理员）\n"
+            "说明：单绑定群自动操作，无需群号；多绑定群需指定群号或 all；白名单 all=全局"
         )
+
+    def _resolve_target_groups(self, mgmt_group_id: str, group_arg: str | None) -> tuple[list[str] | None, str]:
+        """解析操作目标群列表
+
+        Args:
+            mgmt_group_id: 当前管理群 ID
+            group_arg: 用户指定的群号参数，None 表示未提供
+
+        Returns:
+            (目标群列表, 错误信息)；错误信息非空时表示拒绝操作
+        """
+        managed = self._config_manager.get_managed_group_ids(mgmt_group_id)
+        if not managed:
+            return None, "当前管理群没有关联的被管理群"
+        if len(managed) == 1:
+            return managed, ""
+        if not group_arg:
+            return None, "本管理群绑定了多个群，请指定群号或 all。绑定群：" + "、".join(managed)
+        if group_arg == "all":
+            return managed, ""
+        if group_arg not in managed:
+            return None, f"群 {group_arg} 未绑定到本管理群"
+        return [group_arg], ""
 
     # ── 状态 ──────────────────────────────────────────────
 
     async def _status(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
-        if args:
-            target_group_id = args[0]
-            stats = await self._stats_manager.get_stats(group_id=target_group_id)
-            line = self._format_group_stats(target_group_id, stats)
-            return f"📊 审核状态\n{line}"
-        else:
-            managed_groups = self._config_manager.get_managed_group_ids(group_id)
-            if not managed_groups:
-                return "📊 审核状态\n暂无关联的被管理群"
+        group_arg = args[0] if args else None
+        targets, err = self._resolve_target_groups(group_id, group_arg)
+        if err:
+            return f"⚠️ {err}"
 
-            lines = []
-            for mg_id in managed_groups:
-                stats = await self._stats_manager.get_stats(group_id=mg_id)
-                lines.append(self._format_group_stats(mg_id, stats))
-            return "📊 审核状态\n" + "\n".join(lines)
+        lines = []
+        for mg_id in targets:
+            stats = await self._stats_manager.get_stats(group_id=mg_id)
+            lines.append(self._format_group_stats(mg_id, stats))
+        if not lines:
+            return "📊 审核状态\n暂无关联的被管理群"
+        return "📊 审核状态\n" + "\n".join(lines)
 
     @staticmethod
     def _format_group_stats(group_id: str, stats: dict) -> str:
@@ -107,23 +126,34 @@ class CommandHandler:
     # ── 日志 ──────────────────────────────────────────────
 
     async def _log(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
-        page = 1
-        if args:
-            try:
-                page = int(args[0])
-                if page < 1:
-                    page = 1
-            except (ValueError, TypeError):
-                return f"⚠️ 无效的页码: {args[0]}"
-
-        page_size = 10
-        managed_groups = self._config_manager.get_managed_group_ids(group_id)
-        if not managed_groups:
+        managed = self._config_manager.get_managed_group_ids(group_id)
+        if not managed:
             return "📋 违规日志\n暂无关联的被管理群"
 
-        violations = await self._stats_manager.get_violations_multi_group(
-            managed_groups, page=page, page_size=page_size
-        )
+        group_arg: str | None = None
+        page = 1
+        for arg in args:
+            if arg == "all" or arg in managed:
+                group_arg = arg
+            else:
+                try:
+                    candidate = int(arg)
+                    if candidate >= 1:
+                        page = candidate
+                    else:
+                        return "⚠️ 页码必须大于0"
+                except (ValueError, TypeError):
+                    return f"⚠️ 无效的参数: {arg}"
+
+        targets, err = self._resolve_target_groups(group_id, group_arg)
+        if err:
+            return f"⚠️ {err}"
+
+        page_size = 10
+        if len(targets) == 1:
+            violations = await self._stats_manager.get_violations(targets[0], page=page, page_size=page_size)
+        else:
+            violations = await self._stats_manager.get_violations_multi_group(targets, page=page, page_size=page_size)
 
         if not violations:
             return "📋 违规日志\n暂无违规记录"
@@ -146,7 +176,7 @@ class CommandHandler:
     async def _whitelist(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
         """白名单子命令路由: 添加 / 删除 / 列表"""
         if not args:
-            return "⚠️ 用法: /文本审核 白名单 添加|删除|列表 [QQ号]"
+            return "⚠️ 用法: /文本审核 白名单 添加|删除|列表 [QQ号] [群号|all]"
 
         action = args[0]
 
@@ -155,55 +185,88 @@ class CommandHandler:
         elif action == "删除":
             return await self._whitelist_remove(event, group_id, args[1:])
         elif action == "列表":
-            return await self._whitelist_list()
+            return await self._whitelist_list(group_id, args[1:])
         else:
             return f"⚠️ 未知的白名单操作: {action}。可用: 添加 / 删除 / 列表"
 
     async def _whitelist_add(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
-        """添加白名单用户（管理员操作）"""
+        """添加白名单用户（管理员操作），支持群级白名单"""
         if not args:
-            return "⚠️ 用法: /文本审核 白名单 添加 <QQ号>"
+            return "⚠️ 用法: /文本审核 白名单 添加 <QQ号> [群号|all]"
 
         sender_id = str(event.get_sender_id())
         is_admin = await self._admin_manager.is_user_admin(event, group_id, sender_id)
         if not is_admin:
             return "⚠️ 仅管理员可执行此操作"
 
-        target_qq = args[0]
-        success = await self._stats_manager.add_whitelist(target_qq)
-        if success:
+        qq = args[0]
+        group_arg = args[1] if len(args) > 1 else None
+        wl_group = "" if (group_arg in (None, "all")) else group_arg
+
+        # 指定群号时必须绑定到当前管理群
+        if group_arg is not None and group_arg != "all":
+            managed = self._config_manager.get_managed_group_ids(group_id)
+            if group_arg not in managed:
+                return f"⚠️ 群 {group_arg} 未绑定到本管理群"
+
+        result = await self._stats_manager.add_whitelist_with_note(qq, "", wl_group)
+        if result is not None:
             self._config_manager.invalidate_whitelist_cache()
-            return f"✅ 已将用户 {target_qq} 加入白名单"
+            if wl_group:
+                return f"✅ 已将用户 {qq} 加入群 {wl_group} 的白名单"
+            return f"✅ 已将用户 {qq} 加入全局白名单"
         else:
-            return f"⚠️ 用户 {target_qq} 已在白名单中或操作失败"
+            return f"⚠️ 用户 {qq} 已在白名单中或操作失败"
 
     async def _whitelist_remove(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
-        """移除白名单用户（管理员操作）"""
+        """移除白名单用户（管理员操作），支持群级白名单"""
         if not args:
-            return "⚠️ 用法: /文本审核 白名单 删除 <QQ号>"
+            return "⚠️ 用法: /文本审核 白名单 删除 <QQ号> [群号|all]"
 
         sender_id = str(event.get_sender_id())
         is_admin = await self._admin_manager.is_user_admin(event, group_id, sender_id)
         if not is_admin:
             return "⚠️ 仅管理员可执行此操作"
 
-        target_qq = args[0]
-        success = await self._stats_manager.remove_whitelist(target_qq)
+        qq = args[0]
+        group_arg = args[1] if len(args) > 1 else None
+        wl_group = "" if (group_arg in (None, "all")) else group_arg
+
+        # 指定群号时必须绑定到当前管理群
+        if group_arg is not None and group_arg != "all":
+            managed = self._config_manager.get_managed_group_ids(group_id)
+            if group_arg not in managed:
+                return f"⚠️ 群 {group_arg} 未绑定到本管理群"
+
+        success = await self._stats_manager.remove_whitelist(qq, wl_group)
         if success:
             self._config_manager.invalidate_whitelist_cache()
-            return f"✅ 已将用户 {target_qq} 从白名单移除"
+            if wl_group:
+                return f"✅ 已将用户 {qq} 从群 {wl_group} 的白名单移除"
+            return f"✅ 已将用户 {qq} 从全局白名单移除"
         else:
-            return f"⚠️ 用户 {target_qq} 不在白名单中"
+            return f"⚠️ 用户 {qq} 不在白名单中"
 
-    async def _whitelist_list(self) -> str:
-        """列出所有白名单用户"""
-        users = await self._stats_manager.get_whitelist()
+    async def _whitelist_list(self, group_id: str, args: list[str]) -> str:
+        """列出白名单用户，支持按群筛选"""
+        group_arg = args[0] if args else None
+        wl_group = "" if (group_arg in (None, "all")) else group_arg
+
+        # 指定群号时必须绑定到当前管理群
+        if group_arg is not None and group_arg != "all":
+            managed = self._config_manager.get_managed_group_ids(group_id)
+            if group_arg not in managed:
+                return f"⚠️ 群 {group_arg} 未绑定到本管理群"
+
+        users = await self._stats_manager.get_whitelist_by_group(wl_group)
         if users is None:
             return "⚠️ 查询白名单失败（数据库错误）"
         if not users:
-            return "📋 白名单列表\n暂无白名单用户"
+            label = "全局" if not wl_group else f"群 {wl_group}"
+            return f"📋 白名单列表 ({label})\n暂无白名单用户"
 
-        lines = ["📋 白名单列表"]
+        label = "全局" if not wl_group else f"群 {wl_group}"
+        lines = [f"📋 白名单列表 ({label})"]
         for idx, uid in enumerate(users, start=1):
             lines.append(f"{idx}. {uid}")
         return "\n".join(lines)
@@ -211,22 +274,29 @@ class CommandHandler:
     # ── 删除违规 ──────────────────────────────────────────
 
     async def _delete_violation(self, event: AstrMessageEvent, group_id: str, args: list[str]) -> str:
-        """清除指定用户在所有关联群中的违规记录（管理员操作）"""
+        """清除指定用户的违规记录（管理员操作），支持指定群或全绑定群"""
         if not args:
-            return "⚠️ 用法: /文本审核 删除违规 <QQ号>"
+            return "⚠️ 用法: /文本审核 删除违规 <QQ号> [群号|all] 确认"
 
         sender_id = str(event.get_sender_id())
         is_admin = await self._admin_manager.is_user_admin(event, group_id, sender_id)
         if not is_admin:
             return "⚠️ 仅管理员可执行此操作"
 
-        target_qq = args[0]
-        if len(args) < 2 or args[-1] != "确认":
-            return f"⚠️ 确认清除用户 {target_qq} 的违规记录？请追加「确认」参数:\n/文本审核 删除违规 {target_qq} 确认"
+        qq = args[0]
+        has_confirm = "确认" in args
+        if not has_confirm:
+            return f"⚠️ 确认清除用户 {qq} 的违规记录？请追加「确认」参数:\n/文本审核 删除违规 {qq} [群号|all] 确认"
 
-        managed_groups = self._config_manager.get_managed_group_ids(group_id)
-        if not managed_groups:
-            return "⚠️ 当前管理群没有关联的被管理群"
+        # 解析 group_arg: args[1] 若存在且不为"确认"则视为 group_arg
+        group_arg: str | None = None
+        if len(args) > 1 and args[1] != "确认":
+            group_arg = args[1]
 
-        await self._stats_manager.delete_violations(target_qq, managed_groups)
-        return f"✅ 已清除用户 {target_qq} 在所有关联群中的违规记录"
+        targets, err = self._resolve_target_groups(group_id, group_arg)
+        if err:
+            return f"⚠️ {err}"
+
+        await self._stats_manager.delete_violations(qq, targets)
+        group_names = "、".join(targets)
+        return f"✅ 已清除用户 {qq} 在群 {group_names} 中的违规记录"

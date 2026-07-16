@@ -95,9 +95,7 @@ class MessageHandler:
             group_config = self._config_manager.get_group_config(group_id)
             need_admin_check = False
             if group_config:
-                enable_auto_censor = self._config_manager.get_effective_config(
-                    group_id, "enable_auto_censor", False
-                )
+                enable_auto_censor = self._config_manager.get_effective_config(group_id, "enable_auto_censor", False)
                 no_admin_minutes = self._config_manager.get_effective_config(
                     group_id, "auto_censor_no_admin_minutes", 0
                 )
@@ -139,7 +137,7 @@ class MessageHandler:
 
             # ===== 第10步：白名单校验 =====
             whitelist_config = self._config_manager.config.get("whitelist", {})
-            if whitelist_config.get("enabled", False) and await self._config_manager.is_whitelisted(user_id):
+            if whitelist_config.get("enabled", False) and await self._config_manager.is_whitelisted(user_id, group_id):
                 logger.debug(f"用户 {user_id} 在白名单中，跳过审核")
                 return
 

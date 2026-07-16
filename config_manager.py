@@ -26,10 +26,7 @@ class ConfigManager:
             if isinstance(value, dict):
                 result[key] = ConfigManager._safe_copy_config(value)
             elif isinstance(value, list):
-                result[key] = [
-                    ConfigManager._safe_copy_config(v) if isinstance(v, dict) else v
-                    for v in value
-                ]
+                result[key] = [ConfigManager._safe_copy_config(v) if isinstance(v, dict) else v for v in value]
             else:
                 result[key] = value
         return result
@@ -68,6 +65,7 @@ class ConfigManager:
                 logger.warning(f"group_settings 中存在重复的 group_id={group_id}, 后出现的条目将覆盖先前的配置")
             seen.add(group_id)
             config_copy = dict(gs)
+            config_copy.setdefault("group_name", "")
             schedule_str = config_copy.get("auto_censor_schedule", "")
             config_copy["schedule_parsed"] = self._parse_schedule(schedule_str)
             self._group_configs[group_id] = config_copy
@@ -134,18 +132,50 @@ class ConfigManager:
                 result.append(group_id)
         return result
 
-    async def is_whitelisted(self, user_id: str) -> bool:
+    def get_group_display_list(self) -> list[dict]:
+        """返回所有已配置被管理群的显示列表，用于 Dashboard 下拉框
+
+        Returns:
+            每个元素为 {"group_id": ..., "group_name": ...}，group_name 可为空
+        """
+        result: list[dict] = []
+        for group_id, config in self._group_configs.items():
+            if group_id:
+                result.append(
+                    {
+                        "group_id": group_id,
+                        "group_name": config.get("group_name", ""),
+                    }
+                )
+        return result
+
+    async def is_whitelisted(self, user_id: str, group_id: str = "") -> bool:
+        """检查用户是否在白名单中（全局或指定群）
+
+        Args:
+            user_id: 用户 QQ 号
+            group_id: 群号（空=仅检查全局白名单）；传入具体群号时同时检查全局和群级
+
+        Returns:
+            True 表示在白名单中
+        """
         whitelist = self.config.get("whitelist", {})
         if not whitelist.get("enabled", False):
             return False
+        # 刷新全局缓存
         now = asyncio.get_event_loop().time()
         if self._whitelist_cache is None or now - self._whitelist_cache_time > self._whitelist_cache_ttl:
             users = await self._stats_manager.get_whitelist()
             if users is not None:
                 self._whitelist_cache = set(users)
                 self._whitelist_cache_time = now
-            # 若 users 为 None（DB 错误），保留旧缓存，下次重试
-        return user_id in (self._whitelist_cache or set())
+        # 全局缓存快速路径
+        if user_id in (self._whitelist_cache or set()):
+            return True
+        # 群级检查委托 stats_manager（同时检查全局 OR 群级）
+        if group_id:
+            return await self._stats_manager.is_whitelisted(user_id, group_id)
+        return False
 
     def invalidate_whitelist_cache(self) -> None:
         self._whitelist_cache = None

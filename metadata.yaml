@@ -1,7 +1,7 @@
 name: astrbot_plugin_content_audit # 插件唯一识别名，以 astrbot_plugin_ 前缀开头
 display_name: 文本内容审核 # 用于展示的名字
 desc: 基于自用审核 API 的群聊文本内容审核插件，支持双群管理、智能审查、违规通报与处置。 # 插件简短描述
-version: v2.1.0 # 插件版本号
+version: v2.2.0 # 插件版本号
 author: AnteriorTAg127 # 作者
 repo: https://github.com/AnteriorTAg127/astrbot_plugin_content_audit
 type: plugin # 插件类型标识

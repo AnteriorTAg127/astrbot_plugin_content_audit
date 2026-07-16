@@ -177,9 +177,7 @@ class ContentAuditPlugin(Star):
                     elif self._audit_client is not None:
                         # config_manager 不可用时的兜底：直接从 _plugin_config 读 base_url
                         api_config = self._plugin_config.get("api", {})
-                        self._audit_client.update_base_url(
-                            api_config.get("base_url", "http://127.0.0.1:8000")
-                        )
+                        self._audit_client.update_base_url(api_config.get("base_url", "http://127.0.0.1:8000"))
                     if self._audit_client is not None:
                         result = await self._audit_client.health_check()
                         # 记录健康状态汇总（使 health_status 具有消费者）
