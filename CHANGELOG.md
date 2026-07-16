@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.0] - 2026-07-16
+
+### Fixed
+- 修复 Web 管理面板"修改备注/编辑/删除"等操作报 `bridge does not support method PATCH`：AstrBot 插件页桥（`window.AstrBotPluginPage`）仅支持 GET/POST，将违规/审计/白名单/用户档案的更新与删除路由由 PATCH/DELETE 改为 POST 动作后缀（`<id>/update`、`<id>/delete`），前端 `api()` 同步精简为 GET/POST 并改用 `apiPost`
+- 随带修复同一根因的删除操作（`bridge does not support method DELETE`）
+
+### Changed
+- 升级版本号至 v2.1.0
+
 ## [2.0.0] - 2026-06-26
 
 ### Added

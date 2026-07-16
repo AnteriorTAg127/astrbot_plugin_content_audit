@@ -23,7 +23,7 @@ from .web_api import WebApiHandler
     "astrbot_plugin_content_audit",
     "AnteriorTAg127",
     "基于自用审核API的群聊文本内容审核插件",
-    "2.0.0",
+    "2.1.0",
 )
 class ContentAuditPlugin(Star):
     """基于自用审核API的群聊文本内容审核插件"""

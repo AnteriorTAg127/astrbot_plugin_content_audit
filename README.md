@@ -1,7 +1,7 @@
 # 文本内容审核插件 / Text Content Audit Plugin
 
 [![License](https://img.shields.io/badge/license-AGPLv3-blue)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v2.0.0-blue)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-v2.1.0-blue)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-plugin-orange)](https://github.com/AstrBotDevs/AstrBot)
 
 > 这是一个为 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 提供文本内容审核功能的插件。

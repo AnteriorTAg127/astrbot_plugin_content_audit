@@ -252,27 +252,17 @@ tbody tr:hover { background: var(--surface-2); }
     if (method === "GET") {
       return await bridge.apiGet(endpoint, params || {});
     }
-    if (method === "POST" && bridge.apiPost) {
+    if (method === "POST") {
       return await bridge.apiPost(endpoint, body || {});
-    }
-    if (method === "PATCH" && bridge.apiPatch) {
-      return await bridge.apiPatch(endpoint, body || {});
-    }
-    if (method === "DELETE" && bridge.apiDelete) {
-      return await bridge.apiDelete(endpoint);
-    }
-    if (bridge.apiCall) {
-      return await bridge.apiCall(endpoint, { method: method, body: body });
-    }
-    if (bridge.request) {
-      return await bridge.request(endpoint, { method: method, body: body });
     }
     throw new Error("bridge does not support method " + method);
   }
   function apiGet(endpoint, params) { return api("GET", endpoint, params); }
   function apiPost(endpoint, body) { return api("POST", endpoint, null, body); }
-  function apiPatch(endpoint, body) { return api("PATCH", endpoint, null, body); }
-  function apiDelete(endpoint) { return api("DELETE", endpoint); }
+  // 桥（window.AstrBotPluginPage）只暴露 apiGet/apiPost，不支持 PATCH/DELETE；
+  // 更新与删除一律走 POST 动作后缀路由（<id>/update、<id>/delete）。
+  function apiUpdate(endpoint, body) { return apiPost(endpoint + "/update", body); }
+  function apiDelete(endpoint) { return apiPost(endpoint + "/delete"); }
 
   function switchTab(name) {
     state.tab = name;
@@ -593,7 +583,7 @@ tbody tr:hover { background: var(--surface-2); }
             note: form.querySelector('[name="note"]').value
           };
           try {
-            await apiPatch("violations/" + row.id, body);
+            await apiUpdate("violations/" + row.id, body);
             toast("已保存", "success");
             closeModal();
             renderViolations();
@@ -865,7 +855,7 @@ tbody tr:hover { background: var(--surface-2); }
         { label: "保存", cls: "btn-primary", handler: async function(){
           var note = form.querySelector('[name="note"]').value;
           try {
-            await apiPatch("whitelist/" + row.id, { note: note });
+            await apiUpdate("whitelist/" + row.id, { note: note });
             toast("已保存", "success");
             closeModal();
             renderWhitelist();
@@ -1057,7 +1047,7 @@ tbody tr:hover { background: var(--surface-2); }
           var body = readUserForm(form);
           delete body.user_id;
           try {
-            await apiPatch("users/" + encodeURIComponent(row.user_id), body);
+            await apiUpdate("users/" + encodeURIComponent(row.user_id), body);
             toast("已保存", "success");
             closeModal();
             renderUsers();

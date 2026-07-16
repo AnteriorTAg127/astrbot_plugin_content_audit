@@ -103,8 +103,8 @@ class WebApiHandler:
                 "批量删除违规",
             ),
             (f"{prefix}/violations/<vid>", self.api_violations_get, ["GET"], "违规详情"),
-            (f"{prefix}/violations/<vid>", self.api_violations_update, ["PATCH"], "编辑违规"),
-            (f"{prefix}/violations/<vid>", self.api_violations_delete, ["DELETE"], "删除违规"),
+            (f"{prefix}/violations/<vid>/update", self.api_violations_update, ["POST"], "编辑违规"),
+            (f"{prefix}/violations/<vid>/delete", self.api_violations_delete, ["POST"], "删除违规"),
             # 审计日志
             (f"{prefix}/audits", self.api_audits_list, ["GET"], "审计列表"),
             (
@@ -114,18 +114,18 @@ class WebApiHandler:
                 "批量删除审计",
             ),
             (f"{prefix}/audits/<aid>", self.api_audits_get, ["GET"], "审计详情"),
-            (f"{prefix}/audits/<aid>", self.api_audits_delete, ["DELETE"], "删除审计"),
+            (f"{prefix}/audits/<aid>/delete", self.api_audits_delete, ["POST"], "删除审计"),
             # 白名单
             (f"{prefix}/whitelist", self.api_whitelist_list, ["GET"], "白名单列表"),
             (f"{prefix}/whitelist", self.api_whitelist_create, ["POST"], "添加白名单"),
-            (f"{prefix}/whitelist/<wid>", self.api_whitelist_update, ["PATCH"], "更新白名单备注"),
-            (f"{prefix}/whitelist/<wid>", self.api_whitelist_delete, ["DELETE"], "删除白名单"),
+            (f"{prefix}/whitelist/<wid>/update", self.api_whitelist_update, ["POST"], "更新白名单备注"),
+            (f"{prefix}/whitelist/<wid>/delete", self.api_whitelist_delete, ["POST"], "删除白名单"),
             # 用户档案
             (f"{prefix}/users", self.api_users_list, ["GET"], "用户档案列表"),
             (f"{prefix}/users", self.api_users_create, ["POST"], "新增用户档案"),
             (f"{prefix}/users/<user_id>", self.api_users_get, ["GET"], "用户档案详情"),
-            (f"{prefix}/users/<user_id>", self.api_users_update, ["PATCH"], "编辑用户档案"),
-            (f"{prefix}/users/<user_id>", self.api_users_delete, ["DELETE"], "删除用户档案"),
+            (f"{prefix}/users/<user_id>/update", self.api_users_update, ["POST"], "编辑用户档案"),
+            (f"{prefix}/users/<user_id>/delete", self.api_users_delete, ["POST"], "删除用户档案"),
         ]
         ok_cnt = 0
         for route, handler, methods, desc in routes:
@@ -214,7 +214,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_violations_update(self, vid: str) -> Any:
-        """PATCH /violations/<vid>"""
+        """POST /violations/<vid>/update"""
         try:
             vid_int, err = self._id_or_400(vid)
             if err is not None:
@@ -237,7 +237,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_violations_delete(self, vid: str) -> Any:
-        """DELETE /violations/<vid>"""
+        """POST /violations/<vid>/delete"""
         try:
             vid_int, err = self._id_or_400(vid)
             if err is not None:
@@ -329,7 +329,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_audits_delete(self, aid: str) -> Any:
-        """DELETE /audits/<aid>"""
+        """POST /audits/<aid>/delete"""
         try:
             aid_int, err = self._id_or_400(aid)
             if err is not None:
@@ -400,7 +400,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_whitelist_update(self, wid: str) -> Any:
-        """PATCH /whitelist/<wid>  body: {note}"""
+        """POST /whitelist/<wid>/update  body: {note}"""
         try:
             wid_int, err = self._id_or_400(wid)
             if err is not None:
@@ -421,7 +421,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_whitelist_delete(self, wid: str) -> Any:
-        """DELETE /whitelist/<wid>"""
+        """POST /whitelist/<wid>/delete"""
         try:
             wid_int, err = self._id_or_400(wid)
             if err is not None:
@@ -505,7 +505,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_users_update(self, user_id: str) -> Any:
-        """PATCH /users/<user_id>  body: {nickname?, note?, status?, group_ids?}"""
+        """POST /users/<user_id>/update  body: {nickname?, note?, status?, group_ids?}"""
         try:
             user_id = str(user_id or "").strip()
             if not user_id:
@@ -527,7 +527,7 @@ class WebApiHandler:
             return _fail("internal error", 1, 500)
 
     async def api_users_delete(self, user_id: str) -> Any:
-        """DELETE /users/<user_id>"""
+        """POST /users/<user_id>/delete"""
         try:
             user_id = str(user_id or "").strip()
             if not user_id:
